@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import {
-  supabase, callClaude, envoyerLien, deconnexion,
+  supabase, callClaude, inscription, connexion, deconnexion,
   chargerCandidatures, ajouterCandidature, majCandidature, supprimerCandidature,
 } from "./supabase";
 
@@ -37,26 +37,39 @@ function Gauge({ score }) {
 // ---------- Écran de connexion ----------
 function Login() {
   const [email, setEmail] = useState("");
-  const [envoye, setEnvoye] = useState(false);
-  const go = async () => { await envoyerLien(email); setEnvoye(true); };
+  const [password, setPassword] = useState("");
+  const [mode, setMode] = useState("connexion"); // connexion | inscription
+  const [err, setErr] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const go = async () => {
+    setErr(""); setLoading(true);
+    const fn = mode === "connexion" ? connexion : inscription;
+    const { error } = await fn(email, password);
+    setLoading(false);
+    if (error) setErr(mode === "connexion" ? "Email ou mot de passe incorrect." : error.message);
+  };
+
   return (
     <div className="min-h-screen bg-slate-50 flex items-center justify-center px-5">
       <div className="w-full max-w-sm p-6 rounded-2xl bg-white border border-slate-200 text-center">
         <div className="w-11 h-11 rounded-lg bg-indigo-600 flex items-center justify-center text-white font-bold mx-auto mb-3">M</div>
         <h1 className="text-xl font-bold mb-1">CVMatch</h1>
-        <p className="text-slate-500 text-sm mb-5">Connecte-toi pour retrouver ton suivi partout.</p>
-        {envoye ? (
-          <p className="text-sm text-emerald-700 bg-emerald-50 rounded-lg p-3">Lien envoyé ! Ouvre ton mail et clique dessus depuis ce téléphone.</p>
-        ) : (
-          <div className="space-y-2">
-            <input value={email} onChange={(e) => setEmail(e.target.value)} type="email" placeholder="ton@email.com"
-              className={inputCls + " w-full text-center"} />
-            <button onClick={go} disabled={!email}
-              className="w-full px-4 py-2.5 rounded-lg bg-indigo-600 text-white font-medium text-sm hover:bg-indigo-700 disabled:opacity-40 transition">
-              Recevoir mon lien de connexion
-            </button>
-          </div>
-        )}
+        <p className="text-slate-500 text-sm mb-5">{mode === "connexion" ? "Connecte-toi à ton suivi." : "Crée ton compte (mot de passe : 6 caractères min)."}</p>
+        <div className="space-y-2">
+          <input value={email} onChange={(e) => setEmail(e.target.value)} type="email" placeholder="ton@email.com" className={inputCls + " w-full"} />
+          <input value={password} onChange={(e) => setPassword(e.target.value)} type="password" placeholder="Mot de passe"
+            onKeyDown={(e) => e.key === "Enter" && email && password && go()} className={inputCls + " w-full"} />
+          {err && <p className="text-xs text-rose-600 bg-rose-50 rounded-lg p-2 text-left">{err}</p>}
+          <button onClick={go} disabled={!email || !password || loading}
+            className="w-full px-4 py-2.5 rounded-lg bg-indigo-600 text-white font-medium text-sm hover:bg-indigo-700 disabled:opacity-40 transition">
+            {loading ? "…" : mode === "connexion" ? "Se connecter" : "Créer mon compte"}
+          </button>
+          <button onClick={() => { setMode(mode === "connexion" ? "inscription" : "connexion"); setErr(""); }}
+            className="text-xs text-slate-400 hover:text-slate-600 pt-1">
+            {mode === "connexion" ? "Pas encore de compte ? Créer un compte" : "Déjà un compte ? Se connecter"}
+          </button>
+        </div>
       </div>
     </div>
   );
