@@ -4,9 +4,9 @@ const URL = import.meta.env.VITE_SUPABASE_URL;
 const KEY = import.meta.env.VITE_SUPABASE_KEY;
 export const supabase = createClient(URL, KEY);
 
-// ---------- Auth (magic link par email) ----------
-export const envoyerLien = (email) =>
-  supabase.auth.signInWithOtp({ email, options: { emailRedirectTo: window.location.origin } });
+// ---------- Auth (email + mot de passe) ----------
+export const inscription = (email, password) => supabase.auth.signUp({ email, password });
+export const connexion = (email, password) => supabase.auth.signInWithPassword({ email, password });
 export const deconnexion = () => supabase.auth.signOut();
 
 // ---------- CRUD candidatures ----------
