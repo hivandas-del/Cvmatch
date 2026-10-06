@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from "react";
 import {
   supabase, callClaude, inscription, connexion, deconnexion,
-  chargerCandidatures, ajouterCandidature, majCandidature, supprimerCandidature,
+  chargerCandidatures, ajouterCandidature, majCandidature, supprimerCandidature, chargerProfil,
 } from "./supabase";
 import { extraireTexte } from "./extract";
+import Radar from "./Radar";
 
 const STATUTS = ["À postuler", "Envoyée", "Relancée", "Entretien", "Refusée", "Offre"];
 const CONTRATS = ["CDI", "VIE", "Graduate Program", "Stage", "Alternance", "CDD"];
@@ -92,7 +93,7 @@ export default function App() {
 }
 
 function Dashboard({ userId, email }) {
-  const [tab, setTab] = useState("analyse");
+  const [tab, setTab] = useState("radar");
   const [cv, setCv] = useState("");
   const [cvNom, setCvNom] = useState("");
   const [cvManuel, setCvManuel] = useState(false);
@@ -172,6 +173,28 @@ CV:\n${cv}\nANNONCE:\n${annonce}`);
     const ligne = await ajouterCandidature({ ...obj, user_id: userId });
     setCandidatures((c) => [ligne, ...c]);
   }
+
+  // ---------- passerelles depuis le radar ----------
+  const contratDe = (c) => (CONTRATS.includes(c) ? c : "CDI");
+  async function adapterDepuisRadar(r) {
+    const o = r.job_offers ?? {};
+    setEntreprise(o.company || ""); setPoste(o.title || ""); setContrat(contratDe(o.contract));
+    setAnnonce([o.title, [o.company, o.location].filter(Boolean).join(" — "), "", o.description || ""].join("\n"));
+    setAnalyse(null); setRefonte(null); setMessage(null);
+    if (!cv) {
+      const p = await chargerProfil().catch(() => null);
+      if (p?.cv_text) { setCv(p.cv_text); setCvNom("CV du radar (profil enregistré)"); }
+    }
+    setTab("analyse");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+  const suivreDepuisRadar = (r) => {
+    const o = r.job_offers ?? {};
+    return inserer({
+      entreprise: o.company || "—", poste: o.title || "—", contrat: contratDe(o.contract),
+      canal: "—", contact: "", statut: "À postuler", score: r.score ?? null, source: "radar",
+    });
+  };
   const ajouterDepuisAnalyse = () => inserer({
     entreprise: entreprise || "—", poste: poste || "—", contrat,
     canal: "—", contact: "", statut: "À postuler", score: analyse ? analyse.score : null, source: "manuel",
@@ -206,7 +229,7 @@ TEXTE:\n${ajoutTexte}`);
     `Bonjour${c.contact ? " " + c.contact : ""}, je me permets de revenir vers vous concernant ma candidature au poste de ${c.poste} chez ${c.entreprise} (envoyée il y a ${joursDepuis(c.date_candidature)} jours). Je reste très motivé et disponible pour en échanger. Seriez-vous ouvert à un court échange cette semaine ?`;
 
   const filtrees = candidatures.filter((c) => (fContrat === "Tous" || c.contrat === fContrat) && (fStatut === "Tous" || c.statut === fStatut));
-  const tabs = [["analyse", "Analyse"], ["refonte", "Refonte CV"], ["message", "Message LinkedIn"], ["suivi", `Suivi${candidatures.length ? ` (${candidatures.length})` : ""}`]];
+  const tabs = [["radar", "Offres pour moi"], ["analyse", "Analyse"],["refonte", "Refonte CV"], ["message", "Message LinkedIn"], ["suivi", `Suivi${candidatures.length ? ` (${candidatures.length})` : ""}`]];
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800" style={{ fontFamily: "ui-sans-serif, system-ui, sans-serif" }}>
@@ -216,7 +239,7 @@ TEXTE:\n${ajoutTexte}`);
           <h1 className="text-2xl font-bold tracking-tight">CVMatch</h1>
           <button onClick={deconnexion} className="ml-auto text-xs text-slate-400 hover:text-slate-600">{email} · Déconnexion</button>
         </div>
-        <p className="text-slate-500 text-sm mb-6">Analyse ton CV, réécris-le, prépare ton message, suis tes candidatures.</p>
+        <p className="text-slate-500 text-sm mb-6">Trouve les offres faites pour toi, adapte ton CV, prépare ton message, suis tes candidatures.</p>
 
         <div className="flex flex-wrap gap-1 p-1 bg-slate-200/60 rounded-xl mb-6 w-fit">
           {tabs.map(([id, label]) => (
@@ -226,6 +249,8 @@ TEXTE:\n${ajoutTexte}`);
         </div>
 
         {err && <div className="mb-4 px-4 py-3 rounded-lg bg-rose-50 text-rose-700 text-sm">{err}</div>}
+
+        {tab === "radar" && <Radar onAdapter={adapterDepuisRadar} onSuivi={suivreDepuisRadar} />}
 
         {tab === "analyse" && (
           <div className="space-y-4">

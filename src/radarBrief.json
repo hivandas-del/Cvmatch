@@ -1,0 +1,19 @@
+{
+  "disponibilite": "Novembre 2026",
+  "experience_max": 3,
+  "salaire_min_cdi_idf": 46000,
+  "titres_p1": ["data analyst", "ai data analyst", "analyste data", "consultant ia", "ai consultant", "consultant data", "data & ai consultant", "product owner", "ai product owner", "data product owner", "ai automation", "automation engineer", "intelligent automation", "ingénieur automatisation", "data scientist", "analytics engineer", "bi engineer"],
+  "titres_p2": ["genai engineer", "llm engineer", "ai engineer", "ingénieur ia", "data engineer", "business analyst", "chef de projet ia", "chef de projet data", "ai project manager", "data project manager", "consultant bi", "power bi", "bi consultant", "data product manager", "ai product manager", "associate product manager", "transformation ia", "ai transformation", "ai adoption", "solutions engineer", "solutions consultant", "machine learning engineer", "ml engineer"],
+  "titres_p3": ["power platform", "rpa", "data governance", "data quality", "mlops", "pre-sales", "avant-vente", "growth analyst", "marketing data analyst", "risk data analyst", "actuarial", "prompt engineer", "ai operations"],
+  "competences": ["ia générative", "genai", "llm", "rag", "agents", "prompt", "python", "sql", "power bi", "tableau", "alteryx", "power automate", "n8n", "machine learning", "data warehouse", "bigquery", "streamlit", "supabase", "dax", "looker"],
+  "exclusions_titre": ["stage", "stagiaire", "intern", "internship", "alternance", "alternant", "apprenti", "apprentissage", "work-study", "senior", "sr.", "lead", "head of", "principal", "staff", "director", "directeur", "directrice", "manager senior", "freelance", "commercial", "sales executive", "business developer", "technicien support", "helpdesk", "saisie"],
+  "bonus": ["Mention explicite de LLM, IA générative, agents, automatisation", "Anglais demandé ou environnement international", "Secteur banque / assurance / mutuelle (expertise métier directe)", "Stack Power BI / Python / SQL / Alteryx", "Ouvert aux profils junior ou jeunes diplômés", "Possibilité de mobilité internationale ensuite"],
+  "piste_a": { "actif": true, "lieu": "Île-de-France", "contrat": "CDI", "teletravail": "hybride 2-3 j/semaine" },
+  "piste_b": {
+    "actif": true,
+    "vie": true,
+    "pays_adzuna": ["be", "ch", "nl", "de", "gb", "ca", "sg", "us"],
+    "villes": ["Brussels", "Luxembourg", "Geneva", "Zurich", "Amsterdam", "Berlin", "Munich", "Dublin", "London", "Stockholm", "Copenhagen", "Oslo", "Helsinki", "Montreal", "Toronto", "New York", "San Francisco", "Boston", "Dubai", "Abu Dhabi", "Singapore", "Hong Kong", "Istanbul"]
+  },
+  "jsearch_requetes_par_jour": 6
+}

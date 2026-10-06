@@ -42,6 +42,27 @@ Ouvre http://localhost:5173, connecte-toi avec ton email (tu reçois un lien mag
 - Ouvre l'URL Vercel dans Safari/Chrome → menu → "Ajouter à l'écran d'accueil".
 - Tu as maintenant CVMatch comme une appli, synchronisée avec ta base.
 
+## Radar d'offres (onglet « Offres pour moi »)
+Chaque matin, l'Edge Function `radar` collecte les offres IA / data, les trie selon le brief
+(`search_profiles.brief`, copie dans `src/radarBrief.json`) puis Claude Haiku note les meilleures sur le CV.
+
+- **Planification** (pg_cron, heure UTC) : 4h00 agrégateurs · 4h15 sites carrières · 4h40 notation
+- **Sources** : France Travail, Adzuna (19 pays), JSearch / Google for Jobs (LinkedIn, Indeed…),
+  et les sites carrières de la table `career_sites` (Workday, Greenhouse, Lever, Ashby, SmartRecruiters).
+  Un site s'ajoute depuis l'app : colle l'URL de sa page offres → Tester → Ajouter.
+- **Tri automatique** : stages/alternances, senior/lead/manager, 5+ ans, CDI IDF < 46 k€, France hors IDF → écartés.
+  Les offres hors zones internationales ciblées sont pénalisées.
+
+Secrets Supabase à ajouter (Edge Functions → Secrets) :
+| Secret | Où l'obtenir |
+|---|---|
+| `ANTHROPIC_API_KEY` | console.anthropic.com (notation IA) |
+| `FT_CLIENT_ID`, `FT_CLIENT_SECRET` | francetravail.io → créer une application → API « Offres d'emploi v2 » |
+| `ADZUNA_APP_ID`, `ADZUNA_APP_KEY` | developer.adzuna.com |
+| `JSEARCH_API_KEY` (ou `RAPIDAPI_KEY`) | app.openwebninja.com/api/jsearch (ou RapidAPI) |
+
+Sans ces clés, les sites carrières fonctionnent déjà et le tri se fait par mots-clés (« pré-score »).
+
 ## Note sécurité
 La clé `VITE_SUPABASE_KEY` (publishable) peut être publique : c'est la RLS qui protège tes données.
 La clé Anthropic, elle, reste UNIQUEMENT dans les secrets Supabase — jamais dans le front.
