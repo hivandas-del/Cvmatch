@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import {
-  supabase, callClaude, inscription, connexion, deconnexion,
+  supabase, callClaude, inscription, connexion, deconnexion, motDePasseOublie, nouveauMotDePasse,
   chargerCandidatures, ajouterCandidature, majCandidature, supprimerCandidature, chargerProfil,
 } from "./supabase";
 import { extraireTexte } from "./extract";
@@ -37,41 +37,102 @@ function Gauge({ score }) {
 }
 
 // ---------- Écran de connexion ----------
+// Traduit les erreurs Supabase Auth en messages clairs.
+function messageErreur(error) {
+  const m = `${error?.code ?? ""} ${error?.message ?? ""}`.toLowerCase();
+  if (m.includes("invalid login") || m.includes("invalid_credentials")) return "Email ou mot de passe incorrect. Mot de passe oublié ? Clique en dessous.";
+  if (m.includes("not confirmed")) return "Ton email n'est pas encore confirmé : clique sur le lien reçu par mail.";
+  if (m.includes("rate limit") || m.includes("for security purposes")) return "Trop de tentatives : attends une minute avant de réessayer.";
+  if (m.includes("password") && m.includes("6")) return "Mot de passe trop court (6 caractères minimum).";
+  return error?.message || "Une erreur est survenue.";
+}
+
 function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [mode, setMode] = useState("connexion"); // connexion | inscription
+  const [mode, setMode] = useState("connexion"); // connexion | inscription | oubli
   const [err, setErr] = useState("");
+  const [info, setInfo] = useState("");
   const [loading, setLoading] = useState(false);
 
+  const changer = (m) => { setMode(m); setErr(""); setInfo(""); };
   const go = async () => {
-    setErr(""); setLoading(true);
-    const fn = mode === "connexion" ? connexion : inscription;
-    const { error } = await fn(email, password);
-    setLoading(false);
-    if (error) setErr(mode === "connexion" ? "Email ou mot de passe incorrect." : error.message);
+    setErr(""); setInfo(""); setLoading(true);
+    try {
+      if (mode === "connexion") {
+        const { error } = await connexion(email, password);
+        if (error) setErr(messageErreur(error));
+      } else if (mode === "inscription") {
+        const { data, error } = await inscription(email, password);
+        if (error) setErr(messageErreur(error));
+        // Email déjà utilisé : Supabase renvoie un faux utilisateur sans identité, sans erreur.
+        else if (data.user && (data.user.identities ?? []).length === 0) { setErr("Un compte existe déjà avec cet email : connecte-toi, ou utilise « Mot de passe oublié »."); setMode("connexion"); }
+        else if (!data.session) setInfo("Compte créé ! Clique sur le lien reçu par mail pour l'activer, puis reviens ici.");
+      } else {
+        const { error } = await motDePasseOublie(email);
+        if (error) setErr(messageErreur(error));
+        else setInfo("Si un compte existe, un mail de réinitialisation vient d'être envoyé. Ouvre le lien sur cet appareil.");
+      }
+    } finally { setLoading(false); }
   };
+
+  const titre = { connexion: "Connecte-toi à ton suivi.", inscription: "Crée ton compte (mot de passe : 6 caractères min).", oubli: "Entre ton email : tu recevras un lien pour choisir un nouveau mot de passe." }[mode];
+  const pret = email && (mode === "oubli" || password);
 
   return (
     <div className="min-h-screen bg-slate-50 flex items-center justify-center px-5">
       <div className="w-full max-w-sm p-6 rounded-2xl bg-white border border-slate-200 text-center">
         <div className="w-11 h-11 rounded-lg bg-indigo-600 flex items-center justify-center text-white font-bold mx-auto mb-3">M</div>
         <h1 className="text-xl font-bold mb-1">CVMatch</h1>
-        <p className="text-slate-500 text-sm mb-5">{mode === "connexion" ? "Connecte-toi à ton suivi." : "Crée ton compte (mot de passe : 6 caractères min)."}</p>
+        <p className="text-slate-500 text-sm mb-5">{titre}</p>
         <div className="space-y-2">
-          <input value={email} onChange={(e) => setEmail(e.target.value)} type="email" placeholder="ton@email.com" className={inputCls + " w-full"} />
-          <input value={password} onChange={(e) => setPassword(e.target.value)} type="password" placeholder="Mot de passe"
-            onKeyDown={(e) => e.key === "Enter" && email && password && go()} className={inputCls + " w-full"} />
+          <input value={email} onChange={(e) => setEmail(e.target.value)} type="email" autoComplete="email" placeholder="ton@email.com" className={inputCls + " w-full"} />
+          {mode !== "oubli" && (
+            <input value={password} onChange={(e) => setPassword(e.target.value)} type="password" placeholder="Mot de passe"
+              autoComplete={mode === "connexion" ? "current-password" : "new-password"}
+              onKeyDown={(e) => e.key === "Enter" && pret && go()} className={inputCls + " w-full"} />
+          )}
           {err && <p className="text-xs text-rose-600 bg-rose-50 rounded-lg p-2 text-left">{err}</p>}
-          <button onClick={go} disabled={!email || !password || loading}
+          {info && <p className="text-xs text-emerald-700 bg-emerald-50 rounded-lg p-2 text-left">{info}</p>}
+          <button onClick={go} disabled={!pret || loading}
             className="w-full px-4 py-2.5 rounded-lg bg-indigo-600 text-white font-medium text-sm hover:bg-indigo-700 disabled:opacity-40 transition">
-            {loading ? "…" : mode === "connexion" ? "Se connecter" : "Créer mon compte"}
+            {loading ? "…" : { connexion: "Se connecter", inscription: "Créer mon compte", oubli: "Recevoir le lien" }[mode]}
           </button>
-          <button onClick={() => { setMode(mode === "connexion" ? "inscription" : "connexion"); setErr(""); }}
-            className="text-xs text-slate-400 hover:text-slate-600 pt-1">
-            {mode === "connexion" ? "Pas encore de compte ? Créer un compte" : "Déjà un compte ? Se connecter"}
-          </button>
+          <div className="flex flex-col gap-1 pt-1">
+            {mode === "connexion" && <button onClick={() => changer("oubli")} className="text-xs text-indigo-500 hover:text-indigo-700">Mot de passe oublié ?</button>}
+            <button onClick={() => changer(mode === "connexion" ? "inscription" : "connexion")} className="text-xs text-slate-400 hover:text-slate-600">
+              {mode === "connexion" ? "Pas encore de compte ? Créer un compte" : "← Revenir à la connexion"}
+            </button>
+          </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// Écran affiché après clic sur le lien « mot de passe oublié ».
+function NouveauMotDePasse({ onFini }) {
+  const [pwd, setPwd] = useState("");
+  const [err, setErr] = useState("");
+  const [loading, setLoading] = useState(false);
+  const valider = async () => {
+    setErr(""); setLoading(true);
+    const { error } = await nouveauMotDePasse(pwd);
+    setLoading(false);
+    if (error) setErr(messageErreur(error)); else onFini();
+  };
+  return (
+    <div className="min-h-screen bg-slate-50 flex items-center justify-center px-5">
+      <div className="w-full max-w-sm p-6 rounded-2xl bg-white border border-slate-200 text-center">
+        <h1 className="text-xl font-bold mb-1">Nouveau mot de passe</h1>
+        <p className="text-slate-500 text-sm mb-5">Choisis-en un nouveau (6 caractères minimum).</p>
+        <input value={pwd} onChange={(e) => setPwd(e.target.value)} type="password" autoComplete="new-password" placeholder="Nouveau mot de passe"
+          onKeyDown={(e) => e.key === "Enter" && pwd.length >= 6 && valider()} className={inputCls + " w-full mb-2"} />
+        {err && <p className="text-xs text-rose-600 bg-rose-50 rounded-lg p-2 text-left mb-2">{err}</p>}
+        <button onClick={valider} disabled={pwd.length < 6 || loading}
+          className="w-full px-4 py-2.5 rounded-lg bg-indigo-600 text-white font-medium text-sm hover:bg-indigo-700 disabled:opacity-40 transition">
+          {loading ? "…" : "Enregistrer"}
+        </button>
       </div>
     </div>
   );
@@ -80,14 +141,19 @@ function Login() {
 export default function App() {
   const [session, setSession] = useState(null);
   const [pret, setPret] = useState(false);
+  const [recup, setRecup] = useState(false);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => { setSession(data.session); setPret(true); });
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => setSession(s));
+    const { data: sub } = supabase.auth.onAuthStateChange((e, s) => {
+      setSession(s);
+      if (e === "PASSWORD_RECOVERY") setRecup(true);
+    });
     return () => sub.subscription.unsubscribe();
   }, []);
 
   if (!pret) return <div className="min-h-screen bg-slate-50" />;
+  if (recup && session) return <NouveauMotDePasse onFini={() => setRecup(false)} />;
   if (!session) return <Login />;
   return <Dashboard userId={session.user.id} email={session.user.email} />;
 }

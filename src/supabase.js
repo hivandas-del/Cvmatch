@@ -5,9 +5,15 @@ const KEY = import.meta.env.VITE_SUPABASE_KEY;
 export const supabase = createClient(URL, KEY);
 
 // ---------- Auth (email + mot de passe) ----------
-export const inscription = (email, password) => supabase.auth.signUp({ email, password });
+// Les liens des mails (confirmation, réinitialisation) reviennent sur l'adresse où l'app est ouverte,
+// pas sur la « Site URL » par défaut du projet.
+const retour = () => window.location.origin;
+export const inscription = (email, password) =>
+  supabase.auth.signUp({ email, password, options: { emailRedirectTo: retour() } });
 export const connexion = (email, password) => supabase.auth.signInWithPassword({ email, password });
 export const deconnexion = () => supabase.auth.signOut();
+export const motDePasseOublie = (email) => supabase.auth.resetPasswordForEmail(email, { redirectTo: retour() });
+export const nouveauMotDePasse = (password) => supabase.auth.updateUser({ password });
 
 // ---------- CRUD candidatures ----------
 export async function chargerCandidatures() {
