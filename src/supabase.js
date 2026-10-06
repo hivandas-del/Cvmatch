@@ -5,9 +5,15 @@ const KEY = import.meta.env.VITE_SUPABASE_KEY;
 export const supabase = createClient(URL, KEY);
 
 // ---------- Auth (email + mot de passe) ----------
-export const inscription = (email, password) => supabase.auth.signUp({ email, password });
+// Les liens des mails (confirmation, réinitialisation) reviennent sur l'adresse où l'app est ouverte,
+// pas sur la « Site URL » par défaut du projet.
+const retour = () => window.location.origin;
+export const inscription = (email, password) =>
+  supabase.auth.signUp({ email, password, options: { emailRedirectTo: retour() } });
 export const connexion = (email, password) => supabase.auth.signInWithPassword({ email, password });
 export const deconnexion = () => supabase.auth.signOut();
+export const motDePasseOublie = (email) => supabase.auth.resetPasswordForEmail(email, { redirectTo: retour() });
+export const nouveauMotDePasse = (password) => supabase.auth.updateUser({ password });
 
 // ---------- CRUD candidatures ----------
 export async function chargerCandidatures() {
@@ -30,6 +36,63 @@ export async function majCandidature(id, patch) {
 export async function supprimerCandidature(id) {
   const { error } = await supabase.from("candidatures").delete().eq("id", id);
   if (error) throw error;
+}
+
+// ---------- Radar d'offres ----------
+export async function chargerOffres() {
+  const { data, error } = await supabase
+    .from("offer_matches")
+    .select("offer_id, piste, prescore, score, verdict, reasons, scored_by, status, created_at, job_offers(*)")
+    .neq("status", "exclu")
+    .order("created_at", { ascending: false })
+    .limit(600);
+  if (error) throw error;
+  return data;
+}
+export async function compterExclues() {
+  const { count } = await supabase.from("offer_matches").select("offer_id", { count: "exact", head: true }).eq("status", "exclu");
+  return count ?? 0;
+}
+export async function majMatch(offerId, patch) {
+  const { error } = await supabase.from("offer_matches").update({ ...patch, updated_at: new Date().toISOString() }).eq("offer_id", offerId);
+  if (error) throw error;
+}
+export async function chargerProfil() {
+  const { data } = await supabase.from("search_profiles").select("cv_text, brief").maybeSingle();
+  return data;
+}
+export async function chargerJournal() {
+  const { data } = await supabase.from("collect_runs").select("source, started_at, fetched, error").order("started_at", { ascending: false }).limit(150);
+  return data ?? [];
+}
+export async function chargerSites() {
+  const { data, error } = await supabase.from("career_sites").select("*").order("company");
+  if (error) throw error;
+  return data;
+}
+export async function ajouterSite(site) {
+  const { data, error } = await supabase.from("career_sites").insert(site).select().single();
+  if (error) throw error;
+  return data;
+}
+export async function majSite(id, patch) {
+  const { error } = await supabase.from("career_sites").update(patch).eq("id", id);
+  if (error) throw error;
+}
+export async function supprimerSite(id) {
+  const { error } = await supabase.from("career_sites").delete().eq("id", id);
+  if (error) throw error;
+}
+export async function appelRadar(action, extra = {}) {
+  const { data: { session } } = await supabase.auth.getSession();
+  const res = await fetch(`${URL}/functions/v1/radar`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` },
+    body: JSON.stringify({ action, ...extra }),
+  });
+  const out = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(out.error || `Radar : erreur ${res.status}`);
+  return out;
 }
 
 // ---------- IA (via Edge Function, clé secrète côté serveur) ----------
