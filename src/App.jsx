@@ -5,48 +5,102 @@ import {
 } from "./supabase";
 import { extraireTexte } from "./extract";
 import Radar from "./Radar";
+import { tonScore, initiales } from "./ui";
 
 const STATUTS = ["À postuler", "Envoyée", "Relancée", "Entretien", "Refusée", "Offre"];
 const CONTRATS = ["CDI", "VIE", "Graduate Program", "Stage", "Alternance", "CDD"];
 const CANAUX = ["—", "LinkedIn", "Mail"];
 const statutColor = {
-  "À postuler": "bg-slate-100 text-slate-600", Envoyée: "bg-blue-50 text-blue-700",
-  Relancée: "bg-amber-50 text-amber-700", Entretien: "bg-violet-50 text-violet-700",
-  Refusée: "bg-rose-50 text-rose-700", Offre: "bg-emerald-50 text-emerald-700",
+  "À postuler": "bg-stone-100 text-stone-700", Envoyée: "bg-blue-50 text-blue-800",
+  Relancée: "bg-amber-50 text-amber-800", Entretien: "bg-violet-50 text-violet-800",
+  Refusée: "bg-red-50 text-red-800", Offre: "bg-green-50 text-green-800",
 };
-const scoreColor = (s) => (s >= 75 ? "#059669" : s >= 50 ? "#d97706" : "#e11d48");
 const joursDepuis = (d) => Math.floor((Date.now() - new Date(d)) / 86400000);
 const compterMots = (t) => (t.trim() ? t.trim().split(/\s+/).length : 0);
-const inputCls = "px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm outline-none focus:border-indigo-400";
+
+// ---------- icônes (trait) ----------
+const Ico = ({ d, size = 20, children }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    {d ? <path d={d} /> : children}
+  </svg>
+);
+export const IcoFleche = (p) => <Ico {...p} d="M5 12h14M13 6l6 6-6 6" />;
+const IcoOffres = (p) => <Ico {...p}><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="4" /></Ico>;
+const IcoAnalyse = (p) => <Ico {...p} d="M4 19V5M4 19h16M8 15v-4M12 15V8M16 15v-6" />;
+const IcoCV = (p) => <Ico {...p}><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" /><path d="M14 3v6h6M8 13h8M8 17h5" /></Ico>;
+const IcoMessage = (p) => <Ico {...p} d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />;
+const IcoSuivi = (p) => <Ico {...p}><path d="M9 11l3 3 8-8" /><path d="M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9" /></Ico>;
 
 function Gauge({ score }) {
+  const t = tonScore(score);
   const r = 52, c = 2 * Math.PI * r, off = c - (score / 100) * c;
   return (
-    <div className="relative w-36 h-36 shrink-0">
-      <svg className="w-36 h-36 -rotate-90" viewBox="0 0 120 120">
-        <circle cx="60" cy="60" r={r} fill="none" stroke="#e2e8f0" strokeWidth="10" />
-        <circle cx="60" cy="60" r={r} fill="none" stroke={scoreColor(score)} strokeWidth="10"
+    <div className="relative w-32 h-32 shrink-0">
+      <svg className="w-32 h-32 -rotate-90" viewBox="0 0 120 120" aria-hidden="true">
+        <circle cx="60" cy="60" r={r} fill="none" stroke="#F5F5F4" strokeWidth="10" />
+        <circle cx="60" cy="60" r={r} fill="none" stroke={t.trait} strokeWidth="10"
           strokeDasharray={c} strokeDashoffset={off} strokeLinecap="round" style={{ transition: "stroke-dashoffset .8s ease" }} />
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center">
-        <span className="text-4xl font-bold tabular-nums" style={{ color: scoreColor(score) }}>{score}</span>
-        <span className="text-xs text-slate-400">/ 100</span>
+        <span className="text-4xl font-semibold tabular-nums tracking-tight" style={{ color: t.fg }}>{score}</span>
+        <span className="text-xs font-semibold" style={{ color: t.fg }}>{t.label}</span>
       </div>
     </div>
   );
 }
 
-// ---------- Écran de connexion ----------
-// Traduit les erreurs Supabase Auth en messages clairs.
+// ---------- erreurs Auth en clair ----------
 function messageErreur(error) {
   const m = `${error?.code ?? ""} ${error?.message ?? ""}`.toLowerCase();
-  if (m.includes("invalid login") || m.includes("invalid_credentials")) return "Email ou mot de passe incorrect. Mot de passe oublié ? Clique en dessous.";
+  if (m.includes("invalid login") || m.includes("invalid_credentials")) return "Email ou mot de passe incorrect. Mot de passe oublié ? Clique sur le lien au-dessus du champ.";
   if (m.includes("not confirmed")) return "Ton email n'est pas encore confirmé : clique sur le lien reçu par mail.";
   if (m.includes("rate limit") || m.includes("for security purposes")) return "Trop de tentatives : attends une minute avant de réessayer.";
   if (m.includes("password") && m.includes("6")) return "Mot de passe trop court (6 caractères minimum).";
   return error?.message || "Une erreur est survenue.";
 }
 
+// ---------- présentation (moitié gauche de la connexion) ----------
+function Presentation() {
+  const exemples = [
+    { s: 88, t: "Consultant·e AI & Data Platform", b: "Wavestone · Puteaux" },
+    { s: 58, t: "AI Project Manager", b: "Devoteam · Levallois" },
+  ];
+  return (
+    <section className="carte p-6 sm:p-10 lg:p-12 flex flex-col gap-6 lg:justify-between lg:min-h-[calc(100vh-48px)]">
+      <span className="text-[13px] font-bold tracking-[0.08em] uppercase">CVMatch</span>
+      <div className="flex flex-col gap-5 lg:gap-7">
+        <h1 className="m-0 text-[30px] sm:text-[48px] lg:text-[56px] font-semibold tracking-[-0.04em] leading-none">Le bon poste.<br />Sans chercher.</h1>
+        <p className="m-0 text-[15px] sm:text-[17px] text-stone-600 leading-relaxed max-w-md">
+          Chaque matin, CVMatch rassemble les offres IA &amp; data de 23 sources, écarte ce qui ne te correspond pas et note le reste selon ton CV.
+        </p>
+        <div className="hidden sm:flex flex-col gap-3">
+          {exemples.map((e) => {
+            const t = tonScore(e.s);
+            return (
+              <div key={e.t} className="flex items-center gap-3.5 rounded-2xl bg-stone-100 px-4 py-3.5">
+                <span className="w-11 h-11 shrink-0 rounded-xl flex items-center justify-center text-base font-bold" style={{ background: t.bg, color: t.fg }}>{e.s}</span>
+                <div className="min-w-0">
+                  <div className="text-[15px] font-semibold truncate">{e.t}</div>
+                  <div className="text-[13px] text-stone-600">{e.b} · <span style={{ color: t.fg }} className="font-semibold">{t.label.toLowerCase()}</span></div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <div className="flex sm:hidden gap-2 flex-wrap">
+          {[88, 58, 34].map((s) => { const t = tonScore(s); return <span key={s} className="puce font-semibold" style={{ background: t.bg, color: t.fg }}>{s} {t.label.toLowerCase().replace(" match", "")}</span>; })}
+        </div>
+      </div>
+      <div className="hidden sm:flex gap-7 text-sm text-stone-600">
+        <span><b className="text-ink font-semibold">23</b> sources</span>
+        <span><b className="text-ink font-semibold">6 h</b> chaque matin</span>
+        <span><b className="text-ink font-semibold">1 clic</b> pour adapter ton CV</span>
+      </div>
+    </section>
+  );
+}
+
+// ---------- connexion / inscription / mot de passe oublié ----------
 function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -56,7 +110,8 @@ function Login() {
   const [loading, setLoading] = useState(false);
 
   const changer = (m) => { setMode(m); setErr(""); setInfo(""); };
-  const go = async () => {
+  const go = async (e) => {
+    e?.preventDefault();
     setErr(""); setInfo(""); setLoading(true);
     try {
       if (mode === "connexion") {
@@ -71,69 +126,93 @@ function Login() {
       } else {
         const { error } = await motDePasseOublie(email);
         if (error) setErr(messageErreur(error));
-        else setInfo("Si un compte existe, un mail de réinitialisation vient d'être envoyé. Ouvre le lien sur cet appareil.");
+        else setInfo("Si un compte existe, un mail vient de partir. Ouvre le lien sur cet appareil pour choisir un nouveau mot de passe.");
       }
     } finally { setLoading(false); }
   };
 
-  const titre = { connexion: "Connecte-toi à ton suivi.", inscription: "Crée ton compte (mot de passe : 6 caractères min).", oubli: "Entre ton email : tu recevras un lien pour choisir un nouveau mot de passe." }[mode];
+  const titres = {
+    connexion: ["Content de te revoir", "Tes nouvelles offres t'attendent."],
+    inscription: ["Crée ton compte", "Reçois chaque matin les offres faites pour toi."],
+    oubli: ["Mot de passe oublié", "Entre ton email : tu recevras un lien pour en choisir un nouveau."],
+  }[mode];
   const pret = email && (mode === "oubli" || password);
 
   return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center px-5">
-      <div className="w-full max-w-sm p-6 rounded-2xl bg-white border border-slate-200 text-center">
-        <div className="w-11 h-11 rounded-lg bg-indigo-600 flex items-center justify-center text-white font-bold mx-auto mb-3">M</div>
-        <h1 className="text-xl font-bold mb-1">CVMatch</h1>
-        <p className="text-slate-500 text-sm mb-5">{titre}</p>
-        <div className="space-y-2">
-          <input value={email} onChange={(e) => setEmail(e.target.value)} type="email" autoComplete="email" placeholder="ton@email.com" className={inputCls + " w-full"} />
+    <div className="min-h-screen bg-stone-100 p-4 sm:p-6 lg:grid lg:grid-cols-2 lg:gap-6">
+      <Presentation />
+      <section className="flex items-center justify-center py-8 lg:py-0">
+        <form onSubmit={go} className="w-full max-w-[400px] flex flex-col gap-6">
           {mode !== "oubli" && (
-            <input value={password} onChange={(e) => setPassword(e.target.value)} type="password" placeholder="Mot de passe"
-              autoComplete={mode === "connexion" ? "current-password" : "new-password"}
-              onKeyDown={(e) => e.key === "Enter" && pret && go()} className={inputCls + " w-full"} />
+            <div role="tablist" aria-label="Connexion ou inscription" className="grid grid-cols-2 p-1 rounded-2xl bg-stone-200">
+              {[["connexion", "Connexion"], ["inscription", "Inscription"]].map(([id, label]) => (
+                <button key={id} type="button" role="tab" aria-selected={mode === id} onClick={() => changer(id)}
+                  className={`h-11 rounded-xl text-[15px] font-semibold transition ${mode === id ? "bg-white text-ink shadow-sm" : "text-stone-600 hover:text-ink"}`}>{label}</button>
+              ))}
+            </div>
           )}
-          {err && <p className="text-xs text-rose-600 bg-rose-50 rounded-lg p-2 text-left">{err}</p>}
-          {info && <p className="text-xs text-emerald-700 bg-emerald-50 rounded-lg p-2 text-left">{info}</p>}
-          <button onClick={go} disabled={!pret || loading}
-            className="w-full px-4 py-2.5 rounded-lg bg-indigo-600 text-white font-medium text-sm hover:bg-indigo-700 disabled:opacity-40 transition">
-            {loading ? "…" : { connexion: "Se connecter", inscription: "Créer mon compte", oubli: "Recevoir le lien" }[mode]}
-          </button>
-          <div className="flex flex-col gap-1 pt-1">
-            {mode === "connexion" && <button onClick={() => changer("oubli")} className="text-xs text-indigo-500 hover:text-indigo-700">Mot de passe oublié ?</button>}
-            <button onClick={() => changer(mode === "connexion" ? "inscription" : "connexion")} className="text-xs text-slate-400 hover:text-slate-600">
-              {mode === "connexion" ? "Pas encore de compte ? Créer un compte" : "← Revenir à la connexion"}
-            </button>
+          <div>
+            <h2 className="m-0 text-[28px] sm:text-[30px] font-semibold tracking-[-0.03em]">{titres[0]}</h2>
+            <p className="mt-2 mb-0 text-[15px] text-stone-600">{titres[1]}</p>
           </div>
-        </div>
-      </div>
+          <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-1.5">
+              <label htmlFor="email" className="etiquette">Email</label>
+              <input id="email" value={email} onChange={(e) => setEmail(e.target.value)} type="email" autoComplete="email" placeholder="ton@email.com" className="champ" />
+            </div>
+            {mode !== "oubli" && (
+              <div className="flex flex-col gap-1.5">
+                <div className="flex justify-between items-baseline">
+                  <label htmlFor="pwd" className="etiquette">Mot de passe</label>
+                  {mode === "connexion" && <button type="button" onClick={() => changer("oubli")} className="text-[13.5px] underline underline-offset-[3px] hover:text-stone-600">Mot de passe oublié ?</button>}
+                </div>
+                <input id="pwd" value={password} onChange={(e) => setPassword(e.target.value)} type="password" placeholder={mode === "inscription" ? "6 caractères minimum" : ""}
+                  autoComplete={mode === "connexion" ? "current-password" : "new-password"} className="champ" />
+              </div>
+            )}
+          </div>
+          {err && <p role="alert" className="m-0 text-sm rounded-xl p-3.5 bg-red-50 text-red-800">{err}</p>}
+          {info && <p role="status" className="m-0 text-sm rounded-xl p-3.5 bg-green-50 text-green-800">{info}</p>}
+          <button type="submit" disabled={!pret || loading} className="btn-noir h-[54px] text-base rounded-2xl">
+            {loading ? "…" : { connexion: "Se connecter", inscription: "Créer mon compte", oubli: "Recevoir le lien" }[mode]}
+            {!loading && <IcoFleche size={18} />}
+          </button>
+          {mode === "oubli"
+            ? <button type="button" onClick={() => changer("connexion")} className="text-sm text-stone-600 hover:text-ink">← Revenir à la connexion</button>
+            : <p className="m-0 text-center text-[13px] text-stone-600">Tes données restent privées · synchronisé sur ordi et téléphone</p>}
+        </form>
+      </section>
     </div>
   );
 }
 
-// Écran affiché après clic sur le lien « mot de passe oublié ».
+// ---------- après le lien « mot de passe oublié » ----------
 function NouveauMotDePasse({ onFini }) {
   const [pwd, setPwd] = useState("");
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
-  const valider = async () => {
+  const valider = async (e) => {
+    e.preventDefault();
     setErr(""); setLoading(true);
     const { error } = await nouveauMotDePasse(pwd);
     setLoading(false);
     if (error) setErr(messageErreur(error)); else onFini();
   };
   return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center px-5">
-      <div className="w-full max-w-sm p-6 rounded-2xl bg-white border border-slate-200 text-center">
-        <h1 className="text-xl font-bold mb-1">Nouveau mot de passe</h1>
-        <p className="text-slate-500 text-sm mb-5">Choisis-en un nouveau (6 caractères minimum).</p>
-        <input value={pwd} onChange={(e) => setPwd(e.target.value)} type="password" autoComplete="new-password" placeholder="Nouveau mot de passe"
-          onKeyDown={(e) => e.key === "Enter" && pwd.length >= 6 && valider()} className={inputCls + " w-full mb-2"} />
-        {err && <p className="text-xs text-rose-600 bg-rose-50 rounded-lg p-2 text-left mb-2">{err}</p>}
-        <button onClick={valider} disabled={pwd.length < 6 || loading}
-          className="w-full px-4 py-2.5 rounded-lg bg-indigo-600 text-white font-medium text-sm hover:bg-indigo-700 disabled:opacity-40 transition">
-          {loading ? "…" : "Enregistrer"}
-        </button>
-      </div>
+    <div className="min-h-screen bg-stone-100 flex items-center justify-center p-4">
+      <form onSubmit={valider} className="carte w-full max-w-[420px] p-6 sm:p-8 flex flex-col gap-5">
+        <span className="text-[13px] font-bold tracking-[0.08em] uppercase">CVMatch</span>
+        <div>
+          <h1 className="m-0 text-[28px] font-semibold tracking-[-0.03em]">Nouveau mot de passe</h1>
+          <p className="mt-2 mb-0 text-[15px] text-stone-600">Choisis-en un nouveau (6 caractères minimum).</p>
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor="npwd" className="etiquette">Nouveau mot de passe</label>
+          <input id="npwd" value={pwd} onChange={(e) => setPwd(e.target.value)} type="password" autoComplete="new-password" className="champ" />
+        </div>
+        {err && <p role="alert" className="m-0 text-sm rounded-xl p-3.5 bg-red-50 text-red-800">{err}</p>}
+        <button type="submit" disabled={pwd.length < 6 || loading} className="btn-noir h-[54px] text-base rounded-2xl">{loading ? "…" : "Enregistrer"}</button>
+      </form>
     </div>
   );
 }
@@ -152,14 +231,20 @@ export default function App() {
     return () => sub.subscription.unsubscribe();
   }, []);
 
-  if (!pret) return <div className="min-h-screen bg-slate-50" />;
+  if (!pret) return <div className="min-h-screen bg-stone-100" />;
   if (recup && session) return <NouveauMotDePasse onFini={() => setRecup(false)} />;
   if (!session) return <Login />;
   return <Dashboard userId={session.user.id} email={session.user.email} />;
 }
 
+// ---------- vide / chargement ----------
+const Vide = ({ children }) => (
+  <div className="carte p-10 text-center text-[15px] text-stone-600">{children}</div>
+);
+
 function Dashboard({ userId, email }) {
   const [tab, setTab] = useState("radar");
+  const [menu, setMenu] = useState(false);
   const [cv, setCv] = useState("");
   const [cvNom, setCvNom] = useState("");
   const [cvManuel, setCvManuel] = useState(false);
@@ -184,6 +269,7 @@ function Dashboard({ userId, email }) {
 
   useEffect(() => { chargerCandidatures().then(setCandidatures).catch(() => setErr("Chargement impossible.")); }, []);
 
+  const aller = (t) => { setTab(t); setMenu(false); window.scrollTo({ top: 0 }); };
   const copier = (txt, id) => { navigator.clipboard.writeText(txt); setCopie(id); setTimeout(() => setCopie(""), 1500); };
 
   async function choisirCV(e) {
@@ -215,7 +301,7 @@ CV:\n${cv}\nANNONCE:\n${annonce}`);
   });
 
   const lancerRefonte = () => run("refonte", async () => {
-    setRefonte(null); setTab("refonte");
+    setRefonte(null); aller("refonte");
     const r = await callClaude(
       "Tu es un coach CV. Réponds UNIQUEMENT avec un objet JSON valide, sans backticks.",
       `Réécris ce CV pour l'annonce, sans inventer d'expérience. JSON exact :
@@ -225,7 +311,7 @@ CV:\n${cv}\nANNONCE:\n${annonce}`);
   });
 
   const lancerMessage = () => run("message", async () => {
-    setMessage(null); setTab("message");
+    setMessage(null); aller("message");
     const r = await callClaude(
       "Tu rédiges des messages LinkedIn de candidat à recruteur. Réponds UNIQUEMENT avec un objet JSON valide, sans backticks.",
       `Rédige un message LinkedIn pour ${entreprise || "l'entreprise"}, poste ${poste || "visé"}.
@@ -249,10 +335,9 @@ CV:\n${cv}\nANNONCE:\n${annonce}`);
     setAnalyse(null); setRefonte(null); setMessage(null);
     if (!cv) {
       const p = await chargerProfil().catch(() => null);
-      if (p?.cv_text) { setCv(p.cv_text); setCvNom("CV du radar (profil enregistré)"); }
+      if (p?.cv_text) { setCv(p.cv_text); setCvNom("CV de ton profil"); }
     }
-    setTab("analyse");
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    aller("analyse");
   }
   const suivreDepuisRadar = (r) => {
     const o = r.job_offers ?? {};
@@ -295,75 +380,100 @@ TEXTE:\n${ajoutTexte}`);
     `Bonjour${c.contact ? " " + c.contact : ""}, je me permets de revenir vers vous concernant ma candidature au poste de ${c.poste} chez ${c.entreprise} (envoyée il y a ${joursDepuis(c.date_candidature)} jours). Je reste très motivé et disponible pour en échanger. Seriez-vous ouvert à un court échange cette semaine ?`;
 
   const filtrees = candidatures.filter((c) => (fContrat === "Tous" || c.contrat === fContrat) && (fStatut === "Tous" || c.statut === fStatut));
-  const tabs = [["radar", "Offres pour moi"], ["analyse", "Analyse"],["refonte", "Refonte CV"], ["message", "Message LinkedIn"], ["suivi", `Suivi${candidatures.length ? ` (${candidatures.length})` : ""}`]];
+  const tabs = [
+    { id: "radar", label: "Offres", court: "Offres", Icon: IcoOffres },
+    { id: "analyse", label: "Analyse", court: "Analyse", Icon: IcoAnalyse },
+    { id: "refonte", label: "Refonte CV", court: "CV", Icon: IcoCV },
+    { id: "message", label: "Message", court: "Message", Icon: IcoMessage },
+    { id: "suivi", label: "Suivi", court: "Suivi", Icon: IcoSuivi, n: candidatures.length },
+  ];
+  const titrePage = (t, s) => (
+    <div className="mb-6">
+      <h1 className="m-0 text-[30px] sm:text-[40px] font-semibold tracking-[-0.04em] leading-none">{t}</h1>
+      {s && <p className="mt-3 mb-0 text-[15px] text-stone-600">{s}</p>}
+    </div>
+  );
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-800" style={{ fontFamily: "ui-sans-serif, system-ui, sans-serif" }}>
-      <div className="max-w-4xl mx-auto px-5 py-8">
-        <div className="flex items-center gap-3 mb-1">
-          <div className="w-9 h-9 rounded-lg bg-indigo-600 flex items-center justify-center text-white font-bold">M</div>
-          <h1 className="text-2xl font-bold tracking-tight">CVMatch</h1>
-          <button onClick={deconnexion} className="ml-auto text-xs text-slate-400 hover:text-slate-600">{email} · Déconnexion</button>
+    <div className="min-h-screen bg-stone-100 text-ink pb-24 md:pb-10">
+      {/* En-tête */}
+      <header className="sticky top-0 z-30 bg-stone-100/90 backdrop-blur">
+        <div className="max-w-6xl mx-auto px-4 sm:px-8 h-16 md:h-20 flex items-center gap-4">
+          <button onClick={() => aller("radar")} className="text-[13px] font-bold tracking-[0.08em] uppercase md:w-48 text-left">CVMatch</button>
+          <nav aria-label="Principal" className="hidden md:flex mx-auto gap-1 p-1 rounded-2xl bg-white">
+            {tabs.map((t) => (
+              <button key={t.id} onClick={() => aller(t.id)} aria-current={tab === t.id ? "page" : undefined}
+                className={`h-10 px-4 rounded-xl text-sm font-semibold transition flex items-center gap-2 ${tab === t.id ? "bg-ink text-white" : "text-stone-600 hover:text-ink"}`}>
+                {t.label}{t.n ? <span className={`text-[11px] px-1.5 rounded-full ${tab === t.id ? "bg-white/20" : "bg-stone-100"}`}>{t.n}</span> : null}
+              </button>
+            ))}
+          </nav>
+          <div className="ml-auto md:ml-0 md:w-48 flex justify-end relative">
+            <button onClick={() => setMenu((m) => !m)} aria-label="Compte" aria-expanded={menu}
+              className="w-10 h-10 rounded-full bg-white text-[13px] font-bold">{initiales(email)}</button>
+            {menu && (
+              <div className="absolute right-0 top-12 w-64 carte p-2 shadow-lg z-40">
+                <p className="m-0 px-3 py-2 text-[13px] text-stone-600 truncate">{email}</p>
+                <button onClick={deconnexion} className="w-full text-left px-3 h-11 rounded-xl text-sm font-semibold hover:bg-stone-100">Se déconnecter</button>
+              </div>
+            )}
+          </div>
         </div>
-        <p className="text-slate-500 text-sm mb-6">Trouve les offres faites pour toi, adapte ton CV, prépare ton message, suis tes candidatures.</p>
+      </header>
 
-        <div className="flex flex-wrap gap-1 p-1 bg-slate-200/60 rounded-xl mb-6 w-fit">
-          {tabs.map(([id, label]) => (
-            <button key={id} onClick={() => setTab(id)}
-              className={`px-4 py-2 text-sm font-medium rounded-lg transition ${tab === id ? "bg-white shadow-sm text-indigo-700" : "text-slate-500 hover:text-slate-700"}`}>{label}</button>
-          ))}
-        </div>
-
-        {err && <div className="mb-4 px-4 py-3 rounded-lg bg-rose-50 text-rose-700 text-sm">{err}</div>}
+      <main className="max-w-6xl mx-auto px-4 sm:px-8 pt-2">
+        {err && <div role="alert" className="mb-5 px-4 py-3.5 rounded-xl bg-red-50 text-red-800 text-sm">{err}</div>}
 
         {tab === "radar" && <Radar onAdapter={adapterDepuisRadar} onSuivi={suivreDepuisRadar} />}
 
         {tab === "analyse" && (
-          <div className="space-y-4">
+          <div className="flex flex-col gap-5">
+            {titrePage("Analyse", "Compare ton CV à une offre et vois ce qui colle ou ce qui manque.")}
             <div className="grid sm:grid-cols-3 gap-3">
-              <input value={entreprise} onChange={(e) => setEntreprise(e.target.value)} placeholder="Entreprise" className={inputCls} />
-              <input value={poste} onChange={(e) => setPoste(e.target.value)} placeholder="Poste visé" className={inputCls} />
-              <select value={contrat} onChange={(e) => setContrat(e.target.value)} className={inputCls + " cursor-pointer"}>{CONTRATS.map((c) => <option key={c}>{c}</option>)}</select>
+              <div className="flex flex-col gap-1.5"><label htmlFor="ent" className="etiquette">Entreprise</label><input id="ent" value={entreprise} onChange={(e) => setEntreprise(e.target.value)} className="champ" /></div>
+              <div className="flex flex-col gap-1.5"><label htmlFor="pos" className="etiquette">Poste visé</label><input id="pos" value={poste} onChange={(e) => setPoste(e.target.value)} className="champ" /></div>
+              <div className="flex flex-col gap-1.5"><label htmlFor="ctr" className="etiquette">Contrat</label>
+                <select id="ctr" value={contrat} onChange={(e) => setContrat(e.target.value)} className="champ cursor-pointer">{CONTRATS.map((c) => <option key={c}>{c}</option>)}</select></div>
             </div>
             <div className="grid md:grid-cols-2 gap-3">
-              <div><label className="text-sm font-medium text-slate-600 mb-1 block">Ton CV</label>
+              <div className="flex flex-col gap-1.5">
+                <span className="etiquette">Ton CV</span>
                 {!cvManuel ? (
-                  <div className="border border-slate-200 rounded-lg bg-white p-6 text-center">
+                  <div className="carte p-6 text-center flex flex-col items-center gap-3 min-h-[220px] justify-center">
                     <input ref={cvFileRef} type="file" accept=".pdf,.docx,.txt" onChange={choisirCV} className="hidden" />
-                    <button onClick={() => cvFileRef.current.click()} disabled={cvLoading}
-                      className="px-5 py-2.5 rounded-lg bg-slate-900 text-white text-sm font-medium hover:bg-slate-800 disabled:opacity-40 transition">
-                      {cvLoading ? "Lecture…" : "Parcourir…"}
+                    <button onClick={() => cvFileRef.current.click()} disabled={cvLoading} className="btn-noir">
+                      {cvLoading ? "Lecture…" : "Choisir un fichier"}
                     </button>
-                    {cvNom
-                      ? <p className="text-xs text-emerald-600 mt-3">✓ {cvNom} chargé</p>
-                      : <p className="text-xs text-slate-400 mt-3">PDF, DOCX ou TXT</p>}
-                    <button onClick={() => setCvManuel(true)} className="block mx-auto text-xs text-slate-400 hover:text-slate-600 mt-3">ou coller le texte</button>
+                    {cvNom ? <p className="m-0 text-sm font-semibold text-green-700">✓ {cvNom}</p> : <p className="m-0 text-sm text-stone-600">PDF, DOCX ou TXT</p>}
+                    <button onClick={() => setCvManuel(true)} className="text-sm text-stone-600 underline underline-offset-[3px] hover:text-ink">ou coller le texte</button>
                   </div>
                 ) : (
-                  <div>
-                    <textarea value={cv} onChange={(e) => setCv(e.target.value)} rows={10} placeholder="Colle ton CV ici…"
-                      className="w-full p-3 rounded-lg border border-slate-200 bg-white text-sm outline-none focus:border-indigo-400 resize-none" />
-                    <button onClick={() => setCvManuel(false)} className="text-xs text-slate-400 hover:text-slate-600 mt-1">← revenir au fichier</button>
+                  <div className="flex flex-col gap-1.5">
+                    <textarea value={cv} onChange={(e) => setCv(e.target.value)} rows={9} placeholder="Colle ton CV ici…" className="zone" aria-label="Texte du CV" />
+                    <button onClick={() => setCvManuel(false)} className="self-start text-sm text-stone-600 hover:text-ink">← revenir au fichier</button>
                   </div>
                 )}
               </div>
-              <div><label className="text-sm font-medium text-slate-600 mb-1 block">L'annonce</label>
-                <textarea value={annonce} onChange={(e) => setAnnonce(e.target.value)} rows={10} placeholder="Colle l'offre ici…" className="w-full p-3 rounded-lg border border-slate-200 bg-white text-sm outline-none focus:border-indigo-400 resize-none" /></div>
+              <div className="flex flex-col gap-1.5">
+                <label htmlFor="ann" className="etiquette">L'annonce</label>
+                <textarea id="ann" value={annonce} onChange={(e) => setAnnonce(e.target.value)} rows={9} placeholder="Colle l'offre ici…" className="zone" />
+              </div>
             </div>
-            <button onClick={lancerAnalyse} disabled={loading || !cv || !annonce} className="px-5 py-2.5 rounded-lg bg-indigo-600 text-white font-medium text-sm hover:bg-indigo-700 disabled:opacity-40 transition">
-              {loading === "analyse" ? "Analyse en cours…" : "Analyser la compatibilité"}</button>
+            <button onClick={lancerAnalyse} disabled={loading || !cv || !annonce} className="btn-noir self-start">
+              {loading === "analyse" ? "Analyse en cours…" : "Analyser la compatibilité"}
+            </button>
             {analyse && (
-              <div className="mt-2 p-5 rounded-2xl bg-white border border-slate-200 space-y-5">
-                <div className="flex flex-col sm:flex-row items-center gap-5"><Gauge score={analyse.score} /><p className="text-slate-600 text-sm leading-relaxed">{analyse.resume}</p></div>
-                <div className="grid sm:grid-cols-2 gap-4">
-                  <div><p className="text-sm font-semibold text-emerald-700 mb-2">Points forts</p><div className="flex flex-wrap gap-1.5">{analyse.presentes.map((t, i) => <span key={i} className="px-2 py-1 rounded-md bg-emerald-50 text-emerald-700 text-xs">{t}</span>)}</div></div>
-                  <div><p className="text-sm font-semibold text-rose-700 mb-2">Manquant</p><div className="flex flex-wrap gap-1.5">{analyse.manquantes.map((t, i) => <span key={i} className="px-2 py-1 rounded-md bg-rose-50 text-rose-700 text-xs">{t}</span>)}</div></div>
+              <div className="carte p-5 sm:p-7 flex flex-col gap-6">
+                <div className="flex flex-col sm:flex-row items-center gap-5"><Gauge score={analyse.score} /><p className="m-0 text-[15px] leading-relaxed">{analyse.resume}</p></div>
+                <div className="grid sm:grid-cols-2 gap-5">
+                  <div><p className="m-0 mb-2.5 text-sm font-semibold">Points forts</p><div className="flex flex-wrap gap-1.5">{analyse.presentes.map((t, i) => <span key={i} className="puce bg-green-50 text-green-800">{t}</span>)}</div></div>
+                  <div><p className="m-0 mb-2.5 text-sm font-semibold">Manquant</p><div className="flex flex-wrap gap-1.5">{analyse.manquantes.map((t, i) => <span key={i} className="puce bg-red-50 text-red-800">{t}</span>)}</div></div>
                 </div>
-                <div><p className="text-sm font-semibold text-slate-700 mb-2">Conseils</p><ul className="space-y-1.5">{analyse.conseils.map((c, i) => <li key={i} className="text-sm text-slate-600 flex gap-2"><span className="text-indigo-500 mt-0.5">→</span><span>{c}</span></li>)}</ul></div>
-                <div className="flex flex-wrap gap-2 pt-1">
-                  <button onClick={lancerRefonte} className="px-4 py-2 rounded-lg bg-slate-900 text-white text-sm font-medium hover:bg-slate-800 transition">Réécrire mon CV</button>
-                  <button onClick={lancerMessage} className="px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 transition">Rédiger le message LinkedIn</button>
-                  <button onClick={ajouterDepuisAnalyse} className="px-4 py-2 rounded-lg border border-slate-300 text-slate-700 text-sm font-medium hover:bg-slate-50 transition">Ajouter au suivi</button>
+                <div><p className="m-0 mb-2.5 text-sm font-semibold">Conseils</p><ul className="m-0 p-0 list-none flex flex-col gap-2">{analyse.conseils.map((c, i) => <li key={i} className="text-[15px] flex gap-2.5"><span className="text-stone-400">→</span><span>{c}</span></li>)}</ul></div>
+                <div className="flex flex-wrap gap-2">
+                  <button onClick={lancerRefonte} className="btn-noir">Réécrire mon CV</button>
+                  <button onClick={lancerMessage} className="btn-gris">Rédiger le message LinkedIn</button>
+                  <button onClick={ajouterDepuisAnalyse} className="btn-gris">Ajouter au suivi</button>
                 </div>
               </div>
             )}
@@ -372,14 +482,17 @@ TEXTE:\n${ajoutTexte}`);
 
         {tab === "refonte" && (
           <div>
-            {!refonte && loading !== "refonte" && <div className="p-8 text-center text-slate-400 text-sm border border-dashed border-slate-300 rounded-2xl">Lance une analyse puis « Réécrire mon CV ».</div>}
-            {loading === "refonte" && <div className="p-8 text-center text-slate-500 text-sm">Réécriture en cours…</div>}
+            {titrePage("Refonte CV", "Ton CV réécrit pour l'offre analysée, sans rien inventer.")}
+            {!refonte && loading !== "refonte" && <Vide>Lance une analyse puis « Réécrire mon CV ».</Vide>}
+            {loading === "refonte" && <Vide>Réécriture en cours…</Vide>}
             {refonte && (
-              <div className="p-6 rounded-2xl bg-white border border-slate-200 space-y-5">
-                <div><p className="text-xs uppercase tracking-wide text-slate-400 mb-1">Titre</p><p className="text-lg font-semibold text-slate-800">{refonte.titre}</p></div>
-                <div><p className="text-xs uppercase tracking-wide text-slate-400 mb-1">Accroche</p><p className="text-sm text-slate-600 leading-relaxed">{refonte.accroche}</p></div>
-                <div><p className="text-xs uppercase tracking-wide text-slate-400 mb-2">Expériences réécrites</p><ul className="space-y-2">{refonte.bullets.map((b, i) => <li key={i} className="text-sm text-slate-700 flex gap-2 p-2.5 rounded-lg bg-slate-50"><span className="text-indigo-500">•</span><span>{b}</span></li>)}</ul></div>
-                <div><p className="text-xs uppercase tracking-wide text-slate-400 mb-2">À mettre en avant</p><div className="flex flex-wrap gap-1.5">{refonte.a_ajouter.map((t, i) => <span key={i} className="px-2 py-1 rounded-md bg-indigo-50 text-indigo-700 text-xs">{t}</span>)}</div></div>
+              <div className="carte p-5 sm:p-7 flex flex-col gap-6">
+                <div><p className="m-0 mb-1 text-xs font-semibold tracking-[0.06em] uppercase text-stone-600">Titre</p><p className="m-0 text-xl font-semibold tracking-tight">{refonte.titre}</p></div>
+                <div><p className="m-0 mb-1 text-xs font-semibold tracking-[0.06em] uppercase text-stone-600">Accroche</p><p className="m-0 text-[15px] leading-relaxed">{refonte.accroche}</p></div>
+                <div><p className="m-0 mb-2 text-xs font-semibold tracking-[0.06em] uppercase text-stone-600">Expériences réécrites</p>
+                  <ul className="m-0 p-0 list-none flex flex-col gap-2">{refonte.bullets.map((b, i) => <li key={i} className="text-[15px] flex gap-2.5 p-3.5 rounded-xl bg-stone-100"><span>•</span><span>{b}</span></li>)}</ul></div>
+                <div><p className="m-0 mb-2 text-xs font-semibold tracking-[0.06em] uppercase text-stone-600">À mettre en avant</p>
+                  <div className="flex flex-wrap gap-1.5">{refonte.a_ajouter.map((t, i) => <span key={i} className="puce bg-stone-100">{t}</span>)}</div></div>
               </div>
             )}
           </div>
@@ -387,83 +500,121 @@ TEXTE:\n${ajoutTexte}`);
 
         {tab === "message" && (
           <div>
-            {!message && loading !== "message" && <div className="p-8 text-center text-slate-400 text-sm border border-dashed border-slate-300 rounded-2xl">Lance une analyse puis « Rédiger le message LinkedIn ».</div>}
-            {loading === "message" && <div className="p-8 text-center text-slate-500 text-sm">Rédaction en cours…</div>}
+            {titrePage("Message LinkedIn", "Un message court pour relancer le recruteur après ta candidature.")}
+            {!message && loading !== "message" && <Vide>Lance une analyse puis « Rédiger le message LinkedIn ».</Vide>}
+            {loading === "message" && <Vide>Rédaction en cours…</Vide>}
             {message && (
-              <div className="p-6 rounded-2xl bg-white border border-slate-200 space-y-4">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs uppercase tracking-wide text-slate-400">Message ({compterMots(message.message)} mots)</span>
-                  <span className={`text-xs px-2 py-0.5 rounded-md ${compterMots(message.message) <= 90 ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"}`}>{compterMots(message.message) <= 90 ? "≤ 90 mots ✓" : "trop long"}</span>
+              <div className="carte p-5 sm:p-7 flex flex-col gap-4">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-xs font-semibold tracking-[0.06em] uppercase text-stone-600">Message · {compterMots(message.message)} mots</span>
+                  <span className={`puce font-semibold ${compterMots(message.message) <= 90 ? "bg-green-50 text-green-800" : "bg-red-50 text-red-800"}`}>{compterMots(message.message) <= 90 ? "≤ 90 mots ✓" : "trop long"}</span>
                 </div>
-                <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap p-4 rounded-lg bg-slate-50">{message.message}</p>
-                <button onClick={() => copier(message.message, "msg")} className="px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 transition">{copie === "msg" ? "Copié ✓" : "Copier le message"}</button>
-                <p className="text-xs text-slate-400">À toi de l'envoyer depuis LinkedIn — jamais en automatique, c'est ce qui protège ton compte.</p>
+                <p className="m-0 text-[15px] leading-relaxed whitespace-pre-wrap p-4 rounded-xl bg-stone-100">{message.message}</p>
+                <button onClick={() => copier(message.message, "msg")} className="btn-noir self-start">{copie === "msg" ? "Copié ✓" : "Copier le message"}</button>
+                <p className="m-0 text-[13px] text-stone-600">À toi de l'envoyer depuis LinkedIn — jamais en automatique, c'est ce qui protège ton compte.</p>
               </div>
             )}
           </div>
         )}
 
         {tab === "suivi" && (
-          <div className="space-y-4">
+          <div className="flex flex-col gap-5">
+            {titrePage("Suivi", `${candidatures.length} candidature${candidatures.length > 1 ? "s" : ""} · synchronisé sur tous tes appareils.`)}
             {aRelancer.length > 0 && (
-              <div className="p-5 rounded-2xl bg-amber-50 border border-amber-200">
-                <p className="text-sm font-semibold text-amber-800 mb-3">À relancer cette semaine ({aRelancer.length})</p>
-                <div className="space-y-3">
+              <div className="carte p-5">
+                <p className="m-0 mb-3 text-[15px] font-semibold">À relancer cette semaine <span className="puce bg-amber-50 text-amber-800 ml-1">{aRelancer.length}</span></p>
+                <div className="flex flex-col gap-3">
                   {aRelancer.map((c) => (
-                    <div key={c.id} className="p-3 rounded-lg bg-white border border-amber-100">
-                      <p className="text-sm font-medium text-slate-800">{c.contact ? c.contact + " — " : ""}{c.poste} · {c.entreprise}<span className="text-slate-400 font-normal"> · sans réponse depuis {joursDepuis(c.date_candidature)} j</span></p>
-                      <p className="text-xs text-slate-500 mt-1.5 leading-relaxed">{msgRelance(c)}</p>
-                      <button onClick={() => copier(msgRelance(c), c.id)} className="mt-2 text-xs px-3 py-1 rounded-md bg-amber-600 text-white hover:bg-amber-700 transition">{copie === c.id ? "Copié ✓" : "Copier la relance"}</button>
+                    <div key={c.id} className="p-4 rounded-xl bg-stone-100">
+                      <p className="m-0 text-[15px] font-semibold">{c.contact ? c.contact + " — " : ""}{c.poste} · {c.entreprise}<span className="text-stone-600 font-normal"> · sans réponse depuis {joursDepuis(c.date_candidature)} j</span></p>
+                      <p className="mt-1.5 mb-0 text-sm text-stone-600 leading-relaxed">{msgRelance(c)}</p>
+                      <button onClick={() => copier(msgRelance(c), c.id)} className="btn-noir btn-sm mt-3">{copie === c.id ? "Copié ✓" : "Copier la relance"}</button>
                     </div>
                   ))}
                 </div>
               </div>
             )}
-            <div className="p-4 rounded-2xl bg-white border border-slate-200">
-              <p className="text-sm font-semibold text-slate-700 mb-1">Ajout rapide</p>
-              <p className="text-xs text-slate-400 mb-2">Colle le texte de l'offre — l'IA remplit entreprise, poste, contrat et crée la ligne.</p>
-              <textarea value={ajoutTexte} onChange={(e) => setAjoutTexte(e.target.value)} rows={3} placeholder="Colle l'offre ici…" className="w-full p-3 rounded-lg border border-slate-200 bg-white text-sm outline-none focus:border-indigo-400 resize-none mb-2" />
-              <button onClick={ajoutRapide} disabled={loading || !ajoutTexte} className="px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 disabled:opacity-40 transition">{loading === "ajout" ? "Extraction…" : "Ajouter automatiquement"}</button>
+            <div className="carte p-5 flex flex-col gap-3">
+              <div><p className="m-0 text-[15px] font-semibold">Ajout rapide</p><p className="mt-1 mb-0 text-sm text-stone-600">Colle le texte de l'offre : l'IA remplit entreprise, poste et contrat.</p></div>
+              <textarea value={ajoutTexte} onChange={(e) => setAjoutTexte(e.target.value)} rows={3} placeholder="Colle l'offre ici…" className="zone" aria-label="Texte de l'offre" />
+              <button onClick={ajoutRapide} disabled={loading || !ajoutTexte} className="btn-noir self-start">{loading === "ajout" ? "Extraction…" : "Ajouter automatiquement"}</button>
             </div>
-            <div className="flex flex-wrap gap-2 items-center">
-              <button onClick={ligneVide} className="px-4 py-2 rounded-lg bg-slate-900 text-white text-sm font-medium hover:bg-slate-800 transition">+ Ligne</button>
-              <div className="flex gap-2 ml-auto">
-                <select value={fContrat} onChange={(e) => setFContrat(e.target.value)} className={inputCls + " cursor-pointer"}><option>Tous</option>{CONTRATS.map((c) => <option key={c}>{c}</option>)}</select>
-                <select value={fStatut} onChange={(e) => setFStatut(e.target.value)} className={inputCls + " cursor-pointer"}><option>Tous</option>{STATUTS.map((s) => <option key={s}>{s}</option>)}</select>
+            <div className="flex gap-2 items-center">
+              <button onClick={ligneVide} className="btn-blanc btn-sm shrink-0">+ Ligne</button>
+              <div className="flex gap-2 ml-auto min-w-0">
+                <select aria-label="Filtrer par contrat" value={fContrat} onChange={(e) => setFContrat(e.target.value)} className="h-10 min-w-0 px-3 rounded-xl bg-white text-sm font-semibold cursor-pointer"><option>Tous</option>{CONTRATS.map((c) => <option key={c}>{c}</option>)}</select>
+                <select aria-label="Filtrer par statut" value={fStatut} onChange={(e) => setFStatut(e.target.value)} className="h-10 min-w-0 px-3 rounded-xl bg-white text-sm font-semibold cursor-pointer"><option>Tous</option>{STATUTS.map((s) => <option key={s}>{s}</option>)}</select>
               </div>
             </div>
             {filtrees.length === 0 ? (
-              <div className="p-8 text-center text-slate-400 text-sm border border-dashed border-slate-300 rounded-2xl">Aucune candidature. Ajoute une ligne ou utilise l'ajout rapide.</div>
-            ) : (
-              <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white">
-                <table className="w-full text-sm min-w-[720px]">
-                  <thead><tr className="bg-slate-50 text-slate-500 text-left text-xs">
-                    <th className="px-3 py-3 font-medium">Entreprise</th><th className="px-3 py-3 font-medium">Poste</th><th className="px-3 py-3 font-medium">Contrat</th>
-                    <th className="px-3 py-3 font-medium">Date</th><th className="px-3 py-3 font-medium">Canal</th><th className="px-3 py-3 font-medium">Contact</th>
-                    <th className="px-3 py-3 font-medium">Statut</th><th className="px-3 py-3 font-medium">Score</th><th className="px-3 py-3"></th>
+              <Vide>Aucune candidature. Ajoute une ligne, utilise l'ajout rapide ou « Ajouter au suivi » depuis une offre.</Vide>
+            ) : (<>
+              {/* Mobile : une carte par candidature */}
+              <ul className="md:hidden m-0 p-0 list-none flex flex-col gap-2.5">
+                {filtrees.map((c) => {
+                  const t = tonScore(c.score);
+                  return (
+                    <li key={c.id} className="carte p-4 flex flex-col gap-3">
+                      <div className="flex items-start gap-3">
+                        {c.score != null
+                          ? <span className="w-11 h-11 shrink-0 rounded-xl flex items-center justify-center text-base font-bold tabular-nums" style={{ background: t.bg, color: t.fg }}>{c.score}</span>
+                          : <span className="w-11 h-11 shrink-0 rounded-xl flex items-center justify-center bg-stone-100 text-stone-400">—</span>}
+                        <div className="min-w-0 flex-1">
+                          <input aria-label="Entreprise" value={c.entreprise} onChange={(e) => maj(c.id, "entreprise", e.target.value)} className="w-full bg-transparent outline-none text-[15px] font-semibold" />
+                          <input aria-label="Poste" value={c.poste} onChange={(e) => maj(c.id, "poste", e.target.value)} className="w-full bg-transparent outline-none text-sm text-stone-600" />
+                        </div>
+                        <button onClick={() => supprimer(c.id)} aria-label="Supprimer" className="w-8 h-8 shrink-0 rounded-lg text-stone-400 hover:text-red-700 hover:bg-red-50">✕</button>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <select aria-label="Statut" value={c.statut} onChange={(e) => maj(c.id, "statut", e.target.value)} className={`h-9 text-[13px] font-semibold px-3 rounded-full border-0 outline-none cursor-pointer ${statutColor[c.statut]}`}>{STATUTS.map((s) => <option key={s} value={s}>{s}</option>)}</select>
+                        <select aria-label="Contrat" value={c.contrat} onChange={(e) => maj(c.id, "contrat", e.target.value)} className="h-9 px-3 rounded-full bg-stone-100 text-[13px] outline-none cursor-pointer">{CONTRATS.map((x) => <option key={x}>{x}</option>)}</select>
+                        <input aria-label="Date" type="date" value={c.date_candidature} onChange={(e) => maj(c.id, "date_candidature", e.target.value)} className="h-9 px-3 rounded-full bg-stone-100 text-[13px] outline-none" />
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+              <div className="hidden md:block overflow-x-auto carte">
+                <table className="w-full text-sm min-w-[760px]">
+                  <thead><tr className="text-left text-xs font-semibold tracking-[0.04em] uppercase text-stone-600 border-b border-stone-200">
+                    <th className="px-4 py-3.5">Entreprise</th><th className="px-3 py-3.5">Poste</th><th className="px-3 py-3.5">Contrat</th>
+                    <th className="px-3 py-3.5">Date</th><th className="px-3 py-3.5">Canal</th><th className="px-3 py-3.5">Contact</th>
+                    <th className="px-3 py-3.5">Statut</th><th className="px-3 py-3.5">Score</th><th className="px-3 py-3.5"><span className="sr-only">Supprimer</span></th>
                   </tr></thead>
                   <tbody>
-                    {filtrees.map((c) => (
-                      <tr key={c.id} className="border-t border-slate-100">
-                        <td className="px-3 py-2"><input value={c.entreprise} onChange={(e) => maj(c.id, "entreprise", e.target.value)} className="w-full bg-transparent outline-none font-medium text-slate-800" /></td>
-                        <td className="px-3 py-2"><input value={c.poste} onChange={(e) => maj(c.id, "poste", e.target.value)} className="w-full bg-transparent outline-none text-slate-600" /></td>
-                        <td className="px-3 py-2"><select value={c.contrat} onChange={(e) => maj(c.id, "contrat", e.target.value)} className="bg-transparent outline-none text-xs text-slate-600 cursor-pointer">{CONTRATS.map((x) => <option key={x}>{x}</option>)}</select></td>
-                        <td className="px-3 py-2"><input type="date" value={c.date_candidature} onChange={(e) => maj(c.id, "date_candidature", e.target.value)} className="bg-transparent outline-none text-slate-500 text-xs" /></td>
-                        <td className="px-3 py-2"><select value={c.canal} onChange={(e) => maj(c.id, "canal", e.target.value)} className="bg-transparent outline-none text-xs text-slate-600 cursor-pointer">{CANAUX.map((x) => <option key={x}>{x}</option>)}</select></td>
-                        <td className="px-3 py-2"><input value={c.contact || ""} onChange={(e) => maj(c.id, "contact", e.target.value)} placeholder="—" className="w-24 bg-transparent outline-none text-slate-600" /></td>
-                        <td className="px-3 py-2"><select value={c.statut} onChange={(e) => maj(c.id, "statut", e.target.value)} className={`text-xs px-2 py-1 rounded-md border-0 outline-none cursor-pointer ${statutColor[c.statut]}`}>{STATUTS.map((s) => <option key={s} value={s}>{s}</option>)}</select></td>
-                        <td className="px-3 py-2 tabular-nums font-medium" style={{ color: c.score != null ? scoreColor(c.score) : "#94a3b8" }}>{c.score != null ? c.score : "—"}</td>
-                        <td className="px-3 py-2 text-right"><button onClick={() => supprimer(c.id)} className="text-slate-300 hover:text-rose-500 transition">✕</button></td>
-                      </tr>
-                    ))}
+                    {filtrees.map((c) => {
+                      const t = tonScore(c.score);
+                      return (
+                        <tr key={c.id} className="border-t border-stone-100">
+                          <td className="px-4 py-2.5"><input aria-label="Entreprise" value={c.entreprise} onChange={(e) => maj(c.id, "entreprise", e.target.value)} className="w-full bg-transparent outline-none font-semibold" /></td>
+                          <td className="px-3 py-2.5"><input aria-label="Poste" value={c.poste} onChange={(e) => maj(c.id, "poste", e.target.value)} className="w-full bg-transparent outline-none text-stone-700" /></td>
+                          <td className="px-3 py-2.5"><select aria-label="Contrat" value={c.contrat} onChange={(e) => maj(c.id, "contrat", e.target.value)} className="bg-transparent outline-none text-[13px] cursor-pointer">{CONTRATS.map((x) => <option key={x}>{x}</option>)}</select></td>
+                          <td className="px-3 py-2.5"><input aria-label="Date" type="date" value={c.date_candidature} onChange={(e) => maj(c.id, "date_candidature", e.target.value)} className="bg-transparent outline-none text-stone-600 text-[13px]" /></td>
+                          <td className="px-3 py-2.5"><select aria-label="Canal" value={c.canal} onChange={(e) => maj(c.id, "canal", e.target.value)} className="bg-transparent outline-none text-[13px] cursor-pointer">{CANAUX.map((x) => <option key={x}>{x}</option>)}</select></td>
+                          <td className="px-3 py-2.5"><input aria-label="Contact" value={c.contact || ""} onChange={(e) => maj(c.id, "contact", e.target.value)} placeholder="—" className="w-24 bg-transparent outline-none text-stone-700" /></td>
+                          <td className="px-3 py-2.5"><select aria-label="Statut" value={c.statut} onChange={(e) => maj(c.id, "statut", e.target.value)} className={`text-[12.5px] font-semibold px-2.5 py-1 rounded-full border-0 outline-none cursor-pointer ${statutColor[c.statut]}`}>{STATUTS.map((s) => <option key={s} value={s}>{s}</option>)}</select></td>
+                          <td className="px-3 py-2.5">{c.score != null ? <span className="puce font-bold tabular-nums" style={{ background: t.bg, color: t.fg }}>{c.score}</span> : <span className="text-stone-400">—</span>}</td>
+                          <td className="px-3 py-2.5 text-right"><button onClick={() => supprimer(c.id)} aria-label="Supprimer la ligne" className="w-8 h-8 rounded-lg text-stone-400 hover:text-red-700 hover:bg-red-50">✕</button></td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
-            )}
-            <p className="text-xs text-slate-400">Tes candidatures sont enregistrées dans ta base — synchro sur tous tes appareils.</p>
+            </>)}
           </div>
         )}
-      </div>
+      </main>
+
+      {/* Barre d'onglets mobile */}
+      <nav aria-label="Principal" className="md:hidden fixed bottom-0 inset-x-0 z-30 bg-white border-t border-stone-200 grid grid-cols-5" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
+        {tabs.map(({ id, court, Icon }) => (
+          <button key={id} onClick={() => aller(id)} aria-current={tab === id ? "page" : undefined}
+            className={`h-16 flex flex-col items-center justify-center gap-1 text-[11.5px] ${tab === id ? "text-ink font-bold" : "text-stone-500 font-medium"}`}>
+            <Icon size={22} />{court}
+          </button>
+        ))}
+      </nav>
     </div>
   );
 }
