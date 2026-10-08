@@ -410,6 +410,21 @@ const AI_TERMS = ["llm", "genai", "gen ai", "ia generative", "generative ai", "i
 const SECTOR = ["banque", "bank", "assurance", "insurance", "mutuelle", "fintech", "insurtech", "bancaire"];
 const JUNIOR = ["junior", "graduate", "entry level", "jeune diplome", "debutant", "0 3 ans", "1 3 ans", "0 2 ans", "associate", "early career"];
 
+// Calibrage du pré-score (oct. 2026), réglé sur les notes IA déjà données :
+// les postes de conseil junior IA/data étaient sous-notés, les postes de dev / recherche / infra sur-notés.
+const CONSULT_FIT = /\bconsultant\b.*\b(ia|ai|data|bi|transformation|digital|digitale|automation|automatisation|analytics|power bi)\b|\b(ia|ai|data|bi|transformation|digital|digitale|automation|analytics)\b.*\bconsultant\b/;
+const JUNIOR_TITLE = /\b(junior|graduate|new grad|associate|jeune diplome|early career|entry level)\b/;
+const DEV_TITLE = /\b(research|researcher|phd|full ?stack|developer|developpeur|developpeuse|software engineer|architect|architecte|infrastructure|platform|mlops|devops|cloud engineer|forward deployed|back ?end|front ?end|securite|security|cyber|cybersecurite)\b/;
+const AI_ENG_TITLE = /\b((ai|ml|llm|genai|ia|machine learning)\s+engineer|ingenieur\s+(ia|llm))\b/;
+// Annonce rédigée dans une langue locale que le candidat ne parle pas (allemand, néerlandais, italien, nordique).
+const LOCAL_WORDS = /\b(und|der|die|das|mit|fur|wir|ihre|het|een|wij|voor|naar|della|per|con|nostro|og|vi|med|som|ikke)\b/g;
+const KNOWN_WORDS = /\b(the|and|with|you|our|les|des|vous|avec|nous)\b/g;
+function localLanguage(rawTitle: string, desc: string) {
+  if (/\b[mwfd]\s*\/\s*[mwfd]\s*\/\s*[mwfdx]\b/i.test(rawTitle)) return true; // « (m/w/d) » = annonce allemande
+  const local = (desc.match(LOCAL_WORDS) ?? []).length, known = (desc.match(KNOWN_WORDS) ?? []).length;
+  return local > 2 * known + 5;
+}
+
 function wordIn(text: string, terms: string[]) {
   return terms.filter((t) => new RegExp(`\\b${norm(t).replace(/\s+/g, "\\s+")}\\b`).test(text));
 }
@@ -457,12 +472,14 @@ function evaluate(o: any, brief: any) {
 
   // expérience
   const yrs = minYearsRequired(o.description ?? "");
-  if (yrs != null && yrs >= 5) return { excluded: `${yrs}+ ans d'expérience demandés` };
+  const maxYrs = brief.experience_max ?? 3;
+  if (yrs != null && yrs > maxYrs) return { excluded: `${yrs}+ ans d'expérience demandés` };
 
   // pré-score
   let s = 0;
   const reasons: string[] = [];
   const p1 = wordIn(title, brief.titres_p1 ?? []), p2 = wordIn(title, brief.titres_p2 ?? []), p3 = wordIn(title, brief.titres_p3 ?? []);
+  if (!p1.length && CONSULT_FIT.test(title)) p1.push("conseil IA / data");
   if (p1.length) { s += 42; reasons.push(`Métier priorité 1 : ${p1[0]}`); }
   else if (p2.length) { s += 32; reasons.push(`Métier priorité 2 : ${p2[0]}`); }
   else if (p3.length) { s += 22; reasons.push(`Métier priorité 3 : ${p3[0]}`); }
@@ -475,6 +492,11 @@ function evaluate(o: any, brief: any) {
   if (sk.length) reasons.push(`Stack : ${sk.slice(0, 4).join(", ")}`);
   if (wordIn(text, SECTOR).length) { s += 8; reasons.push("Secteur banque / assurance"); }
   if (wordIn(text, JUNIOR).length || (yrs != null && yrs <= 3)) { s += 8; reasons.push("Ouvert aux juniors"); }
+  const juniorTitle = JUNIOR_TITLE.test(title), devTitle = DEV_TITLE.test(title);
+  if (juniorTitle) { s += 8; reasons.push("Junior dans l'intitulé"); }
+  if (devTitle) { s -= 18; reasons.push("Poste de dev / recherche / infra"); }
+  else if (AI_ENG_TITLE.test(title) && !juniorTitle) { s -= 8; reasons.push("Ingénieur IA : profil plus dev"); }
+  if (piste !== "A" && localLanguage(String(o.title ?? ""), norm(o.description))) { s -= 20; reasons.push("Annonce en langue locale"); }
   if (piste !== "A" && /english|anglais/.test(text)) s += 4;
   const zones: string[] = brief.piste_b?.pays_cibles ?? ["BE", "LU", "CH", "NL", "DE", "IE", "GB", "SE", "DK", "NO", "FI", "CA", "US", "AE", "SG", "HK", "TR"];
   if (piste === "B" && country && !zones.includes(country)) { s -= 22; reasons.push(`Pays hors zones ciblées (${country})`); }
