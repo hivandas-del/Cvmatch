@@ -1,6 +1,7 @@
 // Radar d'offres : collecte quotidienne multi-sources + scoring selon le brief et le CV.
 // Actions :
 //   - cron (en-tête x-radar-secret) : {action:"collect", scope:"apis"|"sites"|"all"} | {action:"score_all"}
+//                                     scope "sites" sans part → relance un appel par lot de 10 sites ({part, parts, score_user?})
 //   - utilisateur connecté (JWT)    : {action:"refresh"} (collecte API si > 3 h + scoring) | {action:"collect_sites"}
 //                                     | {action:"score"} | {action:"rescore"} (re-tri complet après un nouveau profil)
 //                                     | {action:"test_site", site:{company, ats, config}}
@@ -244,14 +245,14 @@ async function collectCareerSite(site: Site, push: (o: Offer) => void) {
 
   if (site.ats === "greenhouse") {
     const d = await getJSON(`https://boards-api.greenhouse.io/v1/boards/${c.slug}/jobs?content=true`);
-    for (const j of d?.jobs ?? []) add(base({ source_id: String(j.id), url: j.absolute_url, title: strip(j.title), location: j.location?.name ?? null, description: strip(j.content), posted_at: j.updated_at ?? null }));
+    for (const j of (d?.jobs ?? []).filter((j: any) => worth(strip(j.title)))) add(base({ source_id: String(j.id), url: j.absolute_url, title: strip(j.title), location: j.location?.name ?? null, description: strip(j.content), posted_at: j.updated_at ?? null }));
   } else if (site.ats === "lever") {
     const host = c.eu ? "api.eu.lever.co" : "api.lever.co";
     const d = await getJSON(`https://${host}/v0/postings/${c.slug}?mode=json`);
-    for (const j of d ?? []) add(base({ source_id: j.id, url: j.hostedUrl, title: strip(j.text), location: j.categories?.location ?? null, contract: contractFrom(j.categories?.commitment), description: strip(j.descriptionPlain), posted_at: j.createdAt ? new Date(j.createdAt).toISOString() : null }));
+    for (const j of (d ?? []).filter((j: any) => worth(strip(j.text)))) add(base({ source_id: j.id, url: j.hostedUrl, title: strip(j.text), location: j.categories?.location ?? null, contract: contractFrom(j.categories?.commitment), description: strip(j.descriptionPlain), posted_at: j.createdAt ? new Date(j.createdAt).toISOString() : null }));
   } else if (site.ats === "ashby") {
     const d = await getJSON(`https://api.ashbyhq.com/posting-api/job-board/${c.slug}?includeCompensation=true`);
-    for (const j of d?.jobs ?? []) add(base({ source_id: j.id, url: j.jobUrl, title: strip(j.title), location: j.location ?? null, contract: contractFrom(j.employmentType), remote: j.isRemote ? "remote" : null, description: strip(j.descriptionPlain), posted_at: j.publishedAt ?? null }));
+    for (const j of (d?.jobs ?? []).filter((j: any) => worth(strip(j.title)))) add(base({ source_id: j.id, url: j.jobUrl, title: strip(j.title), location: j.location ?? null, contract: contractFrom(j.employmentType), remote: j.isRemote ? "remote" : null, description: strip(j.descriptionPlain), posted_at: j.publishedAt ?? null }));
   } else if (site.ats === "smartrecruiters") {
     for (const q of c.search ?? ["data", "AI"]) {
       const d = await getJSON(`https://api.smartrecruiters.com/v1/companies/${c.slug}/postings?q=${encodeURIComponent(q)}&limit=100`);
@@ -299,13 +300,29 @@ async function collectCareerSite(site: Site, push: (o: Offer) => void) {
 // scope : "apis" (France Travail, Adzuna, JSearch) | "sites" (sites carrières) | "all".
 // Séparé en deux appels planifiés pour rester sous la limite de durée d'une Edge Function.
 type Task = [string, (push: (o: Offer) => void) => Promise<void>, string | null];
-async function collect(db: SupabaseClient, scope: "apis" | "sites" | "all" = "all") {
+// Les sites carrières sont répartis en lots (un lot = une exécution séparée de la fonction),
+// sinon une seule exécution dépasse la mémoire / le CPU alloués quand il y a beaucoup de sites.
+const SITES_PAR_LOT = 10;
+async function nbLots(db: SupabaseClient) {
+  const { count } = await db.from("career_sites").select("id", { count: "exact", head: true }).eq("enabled", true);
+  return Math.max(1, Math.ceil((count ?? 0) / SITES_PAR_LOT));
+}
+// Lance chaque lot dans sa propre exécution (appel asynchrone via pg_net, secret relu dans Vault).
+async function lancerLots(db: SupabaseClient, uid: string | null = null) {
+  const lots = await nbLots(db);
+  for (let i = 0; i < lots; i++) {
+    await db.rpc("radar_call", { payload: { action: "collect", scope: "sites", part: i, parts: lots, ...(uid ? { score_user: uid } : {}) } });
+  }
+  return lots;
+}
+
+async function collect(db: SupabaseClient, scope: "apis" | "sites" | "all" = "all", part = 0, parts = 1) {
   const { data: profiles } = await db.from("search_profiles").select("brief");
   const brief = profiles?.[0]?.brief ?? {};
   const pb = brief.piste_b ?? {};
   const countries: string[] = pb.actif === false ? [] : (pb.pays_adzuna ?? ["be", "ch", "nl", "de", "gb", "ca", "sg", "us"]);
   const villes: string[] = pb.actif === false ? [] : (pb.villes ?? []);
-  const perDay = Number(brief.jsearch_requetes_par_jour ?? 6);
+  const perDay = Number(brief.jsearch_requetes_par_jour ?? 6); // 6/jour ≈ 186/mois, sous le quota gratuit de 200
 
   const tasks: Task[] = [];
   if (scope !== "sites") {
@@ -313,15 +330,21 @@ async function collect(db: SupabaseClient, scope: "apis" | "sites" | "all" = "al
     const reqIntl = listeBrief(brief.requetes_intl, 8);
     tasks.push(["France Travail", (p) => collectFranceTravail(p, reqFR), null]);
     tasks.push(["Adzuna", (p) => collectAdzuna(p, countries), null]);
-    tasks.push(["JSearch", (p) => collectJSearch(p, villes, perDay, reqIntl), null]);
+    // Palier gratuit JSearch = 200 requêtes / mois → une seule collecte par jour (celle du matin),
+    // jamais relancée par le bouton « Actualiser ».
+    const today = new Date().toISOString().slice(0, 10);
+    const { data: jsDone } = await db.from("collect_runs").select("id").eq("source", "JSearch").is("error", null).gte("started_at", today).limit(1);
+    if (!jsDone?.length) tasks.push(["JSearch", (p) => collectJSearch(p, villes, perDay, reqIntl), null]);
   }
   if (scope !== "apis") {
-    const { data: sites } = await db.from("career_sites").select("id, company, ats, config").eq("enabled", true);
-    for (const s of (sites ?? []) as Site[]) tasks.push([`Carrières · ${s.company}`, (p) => collectCareerSite(s, p), s.id]);
+    const { data: sites } = await db.from("career_sites").select("id, company, ats, config").eq("enabled", true).order("company");
+    // Répartition en quinconce : les gros sites (Workday) se retrouvent dans des lots différents.
+    const lot = ((sites ?? []) as Site[]).filter((_, i) => i % parts === part);
+    for (const s of lot) tasks.push([`Carrières · ${s.company}`, (p) => collectCareerSite(s, p), s.id]);
   }
 
   const summary: Record<string, { fetched: number; error?: string }> = {};
-  await pool(tasks, 6, async ([name, fn, siteId]) => {
+  await pool(tasks, scope === "sites" ? 4 : 6, async ([name, fn, siteId]) => {
     const offers: Offer[] = [];
     const started = new Date().toISOString();
     let error: string | null = null;
@@ -572,7 +595,13 @@ Deno.serve(async (req) => {
   if (secret) {
     const { data: ok } = await db.rpc("radar_check_secret", { s: secret });
     if (!ok) return json({ error: "secret invalide" }, 401);
-    if (body.action === "collect") return json({ collect: await collect(db, body.scope ?? "all") });
+    if (body.action === "collect") {
+      const scope = body.scope ?? "all";
+      if (scope === "sites" && body.part == null) return json({ lots: await lancerLots(db) });
+      const out = await collect(db, scope, Number(body.part ?? 0), Number(body.parts ?? 1));
+      const score = body.score_user ? await scoreUser(db, String(body.score_user), 0) : null;
+      return json({ collect: out, ...(score ? { score } : {}) });
+    }
     if (body.action === "score_all") {
       const { data: profs } = await db.from("search_profiles").select("user_id");
       const out: Record<string, unknown> = {};
@@ -596,8 +625,8 @@ Deno.serve(async (req) => {
     return json({ collect: collected, score: await scoreOuRetri(db, uid, 18) });
   }
   if (body.action === "collect_sites") {
-    const collected = await collect(db, "sites");
-    return json({ collect: collected, score: await scoreOuRetri(db, uid, 12) });
+    // Scan en arrière-plan, lot par lot ; chaque lot trie ensuite les nouvelles offres pour cet utilisateur.
+    return json({ lots: await lancerLots(db, uid), sites: (await db.from("career_sites").select("id", { count: "exact", head: true }).eq("enabled", true)).count ?? 0 });
   }
   if (body.action === "score") return json({ score: await scoreOuRetri(db, uid) });
   if (body.action === "rescore") return json({ rescore: await rescoreUser(db, uid) });

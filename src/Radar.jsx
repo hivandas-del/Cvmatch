@@ -262,6 +262,11 @@ export default function Radar({ onAdapter, onSuivi }) {
     setBusy(action); setMsg("");
     try {
       const r = await appelRadar(action);
+      if (r.lots) {
+        setMsg(`Scan lancé sur ${r.sites} sites carrières (${r.lots} lots en parallèle) · résultats dans ~1 min`);
+        setTimeout(() => recharger().catch(() => {}), 75000);
+        return;
+      }
       const sc = r.score ?? {};
       const fetched = Object.values(r.collect ?? {}).reduce((a, b) => a + (b.fetched || 0), 0);
       const parts = [];
