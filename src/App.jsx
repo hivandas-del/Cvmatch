@@ -33,6 +33,20 @@ const IcoCV = (p) => <Ico {...p}><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2
 const IcoMessage = (p) => <Ico {...p} d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />;
 const IcoSuivi = (p) => <Ico {...p}><path d="M9 11l3 3 8-8" /><path d="M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9" /></Ico>;
 
+// ---------- logo (piste Radar) ----------
+const LogoRadar = ({ size = 18, fond = "#F5F5F4" }) => (
+  <svg width={size} height={size} viewBox="0 0 100 100" aria-hidden="true" className="shrink-0">
+    <circle cx="50" cy="50" r="38" fill="none" stroke="currentColor" strokeWidth="10" />
+    <circle cx="50" cy="50" r="18" fill="none" stroke="currentColor" strokeWidth="10" />
+    <circle cx="76.9" cy="23.1" r="11" fill="currentColor" stroke={fond} strokeWidth="7" />
+  </svg>
+);
+const Logo = ({ fond }) => (
+  <span className="inline-flex items-center gap-2 text-[13px] font-bold tracking-[0.08em] uppercase">
+    <LogoRadar fond={fond} />CVMatch
+  </span>
+);
+
 function Gauge({ score }) {
   const t = tonScore(score);
   const r = 52, c = 2 * Math.PI * r, off = c - (score / 100) * c;
@@ -69,7 +83,7 @@ function Presentation() {
   ];
   return (
     <section className="carte p-6 sm:p-10 lg:p-12 flex flex-col gap-6 lg:justify-between lg:min-h-[calc(100vh-48px)]">
-      <span className="text-[13px] font-bold tracking-[0.08em] uppercase">CVMatch</span>
+      <Logo fond="#FFFFFF" />
       <div className="flex flex-col gap-5 lg:gap-7">
         <h1 className="m-0 text-[30px] sm:text-[48px] lg:text-[56px] font-semibold tracking-[-0.04em] leading-none">Le bon poste.<br />Sans chercher.</h1>
         <p className="m-0 text-[15px] sm:text-[17px] text-stone-600 leading-relaxed max-w-md">
@@ -203,7 +217,7 @@ function NouveauMotDePasse({ onFini }) {
   return (
     <div className="min-h-screen bg-stone-100 flex items-center justify-center p-4">
       <form onSubmit={valider} className="carte w-full max-w-[420px] p-6 sm:p-8 flex flex-col gap-5">
-        <span className="text-[13px] font-bold tracking-[0.08em] uppercase">CVMatch</span>
+        <Logo fond="#FFFFFF" />
         <div>
           <h1 className="m-0 text-[28px] font-semibold tracking-[-0.03em]">Nouveau mot de passe</h1>
           <p className="mt-2 mb-0 text-[15px] text-stone-600">Choisis-en un nouveau (6 caractères minimum).</p>
@@ -441,7 +455,7 @@ TEXTE:\n${ajoutTexte}`);
       {/* En-tête */}
       <header className="no-print sticky top-0 z-30 bg-stone-100/90 backdrop-blur">
         <div className="max-w-6xl mx-auto px-4 sm:px-8 h-16 md:h-20 flex items-center gap-4">
-          <button onClick={() => aller("radar")} className="text-[13px] font-bold tracking-[0.08em] uppercase md:w-48 text-left">CVMatch</button>
+          <button onClick={() => aller("radar")} className="md:w-48 text-left" aria-label="CVMatch, accueil"><Logo /></button>
           <nav aria-label="Principal" className="hidden md:flex mx-auto gap-1 p-1 rounded-2xl bg-white">
             {tabs.map((t) => (
               <button key={t.id} onClick={() => aller(t.id)} aria-current={tab === t.id ? "page" : undefined}
