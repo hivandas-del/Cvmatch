@@ -61,6 +61,37 @@ export async function chargerProfil() {
   const { data } = await supabase.from("search_profiles").select("cv_text, brief").maybeSingle();
   return data;
 }
+// ---------- Mon profil : CV + « ce que je cherche » → brief du radar (calé par Claude) ----------
+const COLS_PROFIL = "cv_text, souhaits_text, cv_fichier, souhaits_fichier, profil_statut, profil_synthese, profil_erreur, profil_session_url, brief, updated_at";
+export async function chargerProfilComplet() {
+  const { data, error } = await supabase.from("search_profiles").select(COLS_PROFIL).maybeSingle();
+  if (error) throw error;
+  return data;
+}
+export async function enregistrerProfil(p) {
+  const { data: { session } } = await supabase.auth.getSession();
+  const { data, error } = await supabase.from("search_profiles")
+    .upsert({
+      user_id: session?.user?.id, cv_text: p.cv_text, souhaits_text: p.souhaits_text,
+      cv_fichier: p.cv_fichier || null, souhaits_fichier: p.souhaits_fichier || null,
+      profil_statut: "en_attente", profil_erreur: null, profil_session_url: null, updated_at: new Date().toISOString(),
+    }, { onConflict: "user_id" })
+    .select(COLS_PROFIL).single();
+  if (error) throw error;
+  return data;
+}
+export async function declencherProfil() {
+  const { data: { session } } = await supabase.auth.getSession();
+  const res = await fetch(`${URL}/functions/v1/adapter-cv`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` },
+    body: JSON.stringify({ profil: true }),
+  });
+  const out = await res.json().catch(() => ({}));
+  if (!res.ok) return { declenche: false, raison: out.error || `http_${res.status}` };
+  return out;
+}
+
 export async function chargerJournal() {
   const { data } = await supabase.from("collect_runs").select("source, started_at, fetched, error").order("started_at", { ascending: false }).limit(150);
   return data ?? [];

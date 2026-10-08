@@ -2,7 +2,8 @@
 // Actions :
 //   - cron (en-tête x-radar-secret) : {action:"collect", scope:"apis"|"sites"|"all"} | {action:"score_all"}
 //   - utilisateur connecté (JWT)    : {action:"refresh"} (collecte API si > 3 h + scoring) | {action:"collect_sites"}
-//                                     | {action:"score"} | {action:"test_site", site:{company, ats, config}}
+//                                     | {action:"score"} | {action:"rescore"} (re-tri complet après un nouveau profil)
+//                                     | {action:"test_site", site:{company, ats, config}}
 // Déployée avec verify_jwt = false : l'authentification est faite ici (secret Vault pour le cron, JWT sinon).
 import { createClient, SupabaseClient } from "jsr:@supabase/supabase-js@2";
 
@@ -131,7 +132,11 @@ const QUICK_EXCLUDE = /\b(senior|sr|lead|head|director|directeur|directrice|prin
 const FT_QUERIES = ["data analyst", "data scientist", "intelligence artificielle", "data engineer", "analytics engineer",
   "consultant data", "product owner data", "power bi", "automatisation", "IA generative"];
 
-async function collectFranceTravail(push: (o: Offer) => void) {
+// Requêtes tirées du profil (« ce que je cherche ») si présentes, sinon la liste par défaut.
+const listeBrief = (v: unknown, max: number) =>
+  Array.isArray(v) ? [...new Set(v.map((x) => String(x ?? "").trim()).filter(Boolean))].slice(0, max) : [];
+
+async function collectFranceTravail(push: (o: Offer) => void, requetes: string[] = []) {
   const id = env("FT_CLIENT_ID"), secret = env("FT_CLIENT_SECRET");
   if (!id || !secret) throw new Error("clés France Travail absentes (FT_CLIENT_ID / FT_CLIENT_SECRET)");
   const tok = await getJSON(
@@ -143,7 +148,7 @@ async function collectFranceTravail(push: (o: Offer) => void) {
     },
   );
   const auth = { Authorization: `Bearer ${tok.access_token}` };
-  for (const q of FT_QUERIES) {
+  for (const q of requetes.length ? requetes : FT_QUERIES) {
     const p = new URLSearchParams({ motsCles: q.split(" ").join(","), region: "11", typeContrat: "CDI", publieeDepuis: "7", range: "0-149" });
     const d = await getJSON(`https://api.francetravail.io/partenaire/offresdemploi/v2/offres/search?${p}`, { headers: auth }).catch(() => null);
     for (const r of d?.resultats ?? []) {
@@ -200,10 +205,11 @@ async function collectAdzuna(push: (o: Offer) => void, countries: string[]) {
 
 const JS_ROLES = '("data analyst" OR "data scientist" OR "AI consultant" OR "AI engineer" OR "analytics engineer" OR "AI product owner" OR "automation engineer")';
 
-async function collectJSearch(push: (o: Offer) => void, villes: string[], perDay: number) {
+async function collectJSearch(push: (o: Offer) => void, villes: string[], perDay: number, roles: string[] = []) {
   const nKey = env("JSEARCH_API_KEY"), rKey = env("RAPIDAPI_KEY");
   if (!nKey && !rKey) throw new Error("clé JSearch absente (JSEARCH_API_KEY ou RAPIDAPI_KEY)");
-  const queries = [...villes.map((v) => `${JS_ROLES} junior in ${v}`), "VIE data OR IA OR \"intelligence artificielle\" Business France"];
+  const r = roles.length ? `(${roles.map((x) => `"${x.replace(/"/g, "")}"`).join(" OR ")})` : JS_ROLES;
+  const queries = [...villes.map((v) => `${r} junior in ${v}`), "VIE data OR IA OR \"intelligence artificielle\" Business France"];
   const day = Math.floor(Date.now() / 86400000);
   const todays = Array.from({ length: Math.min(perDay, queries.length) }, (_, i) => queries[(day * perDay + i) % queries.length]);
   for (const q of todays) {
@@ -303,9 +309,11 @@ async function collect(db: SupabaseClient, scope: "apis" | "sites" | "all" = "al
 
   const tasks: Task[] = [];
   if (scope !== "sites") {
-    tasks.push(["France Travail", (p) => collectFranceTravail(p), null]);
+    const reqFR = listeBrief(brief.requetes_fr, 14);
+    const reqIntl = listeBrief(brief.requetes_intl, 8);
+    tasks.push(["France Travail", (p) => collectFranceTravail(p, reqFR), null]);
     tasks.push(["Adzuna", (p) => collectAdzuna(p, countries), null]);
-    tasks.push(["JSearch", (p) => collectJSearch(p, villes, perDay), null]);
+    tasks.push(["JSearch", (p) => collectJSearch(p, villes, perDay, reqIntl), null]);
   }
   if (scope !== "apis") {
     const { data: sites } = await db.from("career_sites").select("id, company, ats, config").eq("enabled", true);
@@ -370,7 +378,8 @@ function evaluate(o: any, brief: any) {
   // exclusions titre
   const exTitle = wordIn(title, brief.exclusions_titre ?? []);
   if (exTitle.length) return { excluded: `Titre exclu : ${exTitle[0]}` };
-  if (!isRelevantTitle(o.title)) return { excluded: "Hors périmètre IA / data" };
+  const titresBrief = [...(brief.titres_p1 ?? []), ...(brief.titres_p2 ?? []), ...(brief.titres_p3 ?? [])];
+  if (!isRelevantTitle(o.title) && !wordIn(title, titresBrief).length) return { excluded: "Hors des métiers visés" };
   // « Manager » = poste d'encadrement (sauf product / project / program manager, visés en junior).
   if (/\bmanager\b/.test(title) && !/\b(product|project|program|programme|projet|account|associate)\s+manager\b/.test(title)) return { excluded: "Poste de manager" };
 
@@ -473,6 +482,7 @@ async function scoreUser(db: SupabaseClient, userId: string, aiLimit = 36) {
   }
 
   // 2) notation IA des meilleures offres non encore notées
+  if (aiLimit <= 0) return { added, excluded };
   const { data: todo } = await db.from("offer_matches")
     .select("offer_id, piste, prescore, job_offers(*)")
     .eq("user_id", userId).eq("scored_by", "mots-cles").in("status", ["nouveau", "vu"])
@@ -497,6 +507,60 @@ async function scoreUser(db: SupabaseClient, userId: string, aiLimit = 36) {
   return { added, excluded, aiScored, ...(aiError ? { aiError } : {}) };
 }
 
+// Re-tri complet après un changement de profil : on réévalue avec le nouveau brief toutes les offres
+// récentes déjà triées (sauf celles ignorées ou ajoutées au suivi à la main). Les notes IA déjà données
+// sont gardées ; une offre qui sort du périmètre passe en « exclu », une offre exclue qui y rentre revient.
+async function rescoreUser(db: SupabaseClient, userId: string) {
+  const { data: prof } = await db.from("search_profiles").select("brief").eq("user_id", userId).maybeSingle();
+  if (!prof) return { error: "profil de recherche absent" };
+  const brief = prof.brief ?? {};
+  const since = new Date(Date.now() - 40 * 86400000).toISOString();
+  let revues = 0, exclues = 0, reintegrees = 0;
+  for (let page = 0; page < 20; page++) {
+    const { data: rows } = await db.from("offer_matches")
+      .select("offer_id, status, scored_by, job_offers(*)")
+      .eq("user_id", userId).in("status", ["nouveau", "vu", "exclu"]).gte("created_at", since)
+      .order("offer_id").range(page * 400, page * 400 + 399);
+    if (!rows?.length) break;
+    const maj: any[] = [];
+    for (const m of rows as any[]) {
+      if (!m.job_offers) continue;
+      const ev: any = evaluate(m.job_offers, brief);
+      revues++;
+      if (ev.excluded) {
+        if (m.status !== "exclu") exclues++;
+        maj.push({ user_id: userId, offer_id: m.offer_id, status: "exclu", ...(m.scored_by === "ia" ? {} : { verdict: ev.excluded, reasons: [] }) });
+      } else {
+        const back = m.status === "exclu";
+        if (back) reintegrees++;
+        maj.push({
+          user_id: userId, offer_id: m.offer_id, piste: ev.piste, prescore: ev.prescore,
+          status: back ? "nouveau" : m.status,
+          ...(m.scored_by === "ia" ? {} : { reasons: ev.reasons, verdict: null, scored_by: "mots-cles" }),
+        });
+      }
+    }
+    for (let i = 0; i < maj.length; i += 300) {
+      // Upsert ligne à ligne regroupé par forme (PostgREST exige les mêmes colonnes dans un lot).
+      const lot = maj.slice(i, i + 300);
+      const groupes = new Map<string, any[]>();
+      for (const r of lot) { const k = Object.keys(r).sort().join(","); groupes.set(k, [...(groupes.get(k) ?? []), r]); }
+      for (const g of groupes.values()) await db.from("offer_matches").upsert(g.map((r) => ({ ...r, updated_at: new Date().toISOString() })), { onConflict: "user_id,offer_id" });
+    }
+    if (rows.length < 400) break;
+  }
+  await db.from("search_profiles").update({ profil_a_retrier: false }).eq("user_id", userId);
+  const nouvelles = await scoreUser(db, userId, 0);
+  return { revues, exclues, reintegrees, nouvelles };
+}
+
+// Tri normal, précédé d'un re-tri complet si le profil a changé depuis (drapeau posé par la tâche Claude).
+async function scoreOuRetri(db: SupabaseClient, userId: string, aiLimit = 36) {
+  const { data: p } = await db.from("search_profiles").select("profil_a_retrier").eq("user_id", userId).maybeSingle();
+  if (p?.profil_a_retrier) return { retri: await rescoreUser(db, userId) };
+  return scoreUser(db, userId, aiLimit);
+}
+
 // ---------------------------------------------------------------- serveur
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
@@ -512,7 +576,7 @@ Deno.serve(async (req) => {
     if (body.action === "score_all") {
       const { data: profs } = await db.from("search_profiles").select("user_id");
       const out: Record<string, unknown> = {};
-      for (const p of profs ?? []) out[p.user_id] = await scoreUser(db, p.user_id);
+      for (const p of profs ?? []) out[p.user_id] = await scoreOuRetri(db, p.user_id);
       return json({ score: out });
     }
     return json({ error: "action inconnue" }, 400);
@@ -529,13 +593,14 @@ Deno.serve(async (req) => {
       .in("source", ["France Travail", "Adzuna", "JSearch"]).order("started_at", { ascending: false }).limit(1);
     const age = last?.[0] ? Date.now() - new Date(last[0].started_at).getTime() : Infinity;
     const collected = age > 3 * 3600000 ? await collect(db, "apis") : null;
-    return json({ collect: collected, score: await scoreUser(db, uid, 18) });
+    return json({ collect: collected, score: await scoreOuRetri(db, uid, 18) });
   }
   if (body.action === "collect_sites") {
     const collected = await collect(db, "sites");
-    return json({ collect: collected, score: await scoreUser(db, uid, 12) });
+    return json({ collect: collected, score: await scoreOuRetri(db, uid, 12) });
   }
-  if (body.action === "score") return json({ score: await scoreUser(db, uid) });
+  if (body.action === "score") return json({ score: await scoreOuRetri(db, uid) });
+  if (body.action === "rescore") return json({ rescore: await rescoreUser(db, uid) });
   if (body.action === "test_site") {
     // Teste un site carrières sans l'enregistrer : nombre d'offres pertinentes + exemples.
     const s = body.site ?? {};
