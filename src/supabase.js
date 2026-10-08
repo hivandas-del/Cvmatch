@@ -95,6 +95,48 @@ export async function appelRadar(action, extra = {}) {
   return out;
 }
 
+// ---------- Adapter mon CV (tâche planifiée Claude sur l'abonnement, pas de clé API) ----------
+// 1) on dépose la demande dans cv_adaptations, 2) l'Edge Function « adapter-cv » déclenche la tâche,
+// 3) la tâche écrit le CV réécrit dans `resultat` ; l'appli relit la ligne jusqu'au statut « pret ».
+const COLS_ADAPT = "id, offer_id, entreprise, poste, statut, resultat, erreur, session_url, created_at, updated_at";
+export async function creerAdaptation(d) {
+  const { data, error } = await supabase.from("cv_adaptations")
+    .insert({ ...d, annonce: (d.annonce || "").slice(0, 9000) }).select(COLS_ADAPT).single();
+  if (error) throw error;
+  return data;
+}
+export async function chargerAdaptations() {
+  const { data, error } = await supabase.from("cv_adaptations").select(COLS_ADAPT)
+    .order("created_at", { ascending: false }).limit(30);
+  if (error) throw error;
+  return data;
+}
+export async function chargerAdaptation(id) {
+  const { data, error } = await supabase.from("cv_adaptations").select(COLS_ADAPT).eq("id", id).single();
+  if (error) throw error;
+  return data;
+}
+export async function relancerAdaptation(id) {
+  const { error } = await supabase.from("cv_adaptations")
+    .update({ statut: "en_attente", erreur: null, updated_at: new Date().toISOString() }).eq("id", id);
+  if (error) throw error;
+}
+export async function supprimerAdaptation(id) {
+  const { error } = await supabase.from("cv_adaptations").delete().eq("id", id);
+  if (error) throw error;
+}
+export async function declencherAdaptation(id) {
+  const { data: { session } } = await supabase.auth.getSession();
+  const res = await fetch(`${URL}/functions/v1/adapter-cv`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` },
+    body: JSON.stringify({ id }),
+  });
+  const out = await res.json().catch(() => ({}));
+  if (!res.ok) return { declenche: false, raison: out.error || `http_${res.status}` };
+  return out;
+}
+
 // ---------- IA (via Edge Function, clé secrète côté serveur) ----------
 export async function callClaude(system, user) {
   const { data: { session } } = await supabase.auth.getSession();
