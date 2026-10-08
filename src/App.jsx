@@ -3,7 +3,9 @@ import {
   supabase, callClaude, inscription, connexion, deconnexion, motDePasseOublie, nouveauMotDePasse,
   chargerCandidatures, ajouterCandidature, majCandidature, supprimerCandidature, chargerProfil,
   creerAdaptation, chargerAdaptations, chargerAdaptation, declencherAdaptation, relancerAdaptation, supprimerAdaptation,
+  creerAnalyse, chargerAnalyses, chargerAnalyse, declencherAnalyse, relancerAnalyse, supprimerAnalyse,
 } from "./supabase";
+import { AttenteAnalyse, ErreurAnalyse, ListeAnalyses } from "./Analyse";
 import { extraireTexte } from "./extract";
 import Radar from "./Radar";
 import Refonte from "./Refonte";
@@ -273,7 +275,9 @@ function Dashboard({ userId, email }) {
   const [poste, setPoste] = useState("");
   const [contrat, setContrat] = useState("CDI");
 
-  const [analyse, setAnalyse] = useState(null);
+  const [analyses, setAnalyses] = useState([]);
+  const [analyseId, setAnalyseId] = useState(null);
+  const [offreAnalyse, setOffreAnalyse] = useState(null); // offre du radar en cours d'analyse (même note que le radar)
   const [adaptations, setAdaptations] = useState([]);
   const [courante, setCourante] = useState(null);
   const [raisons, setRaisons] = useState({});
@@ -312,6 +316,22 @@ function Dashboard({ userId, email }) {
     return () => clearInterval(t);
   }, [enCours]);
 
+  // Analyses : on garde les dernières (le résultat reste après un rechargement) et on relit celles qui tournent.
+  useEffect(() => {
+    chargerAnalyses().then((l) => { setAnalyses(l); setAnalyseId((c) => c || l[0]?.id || null); }).catch(() => {});
+  }, []);
+  const analysesEnCours = analyses.filter((a) => a.statut === "en_attente" || a.statut === "en_cours").map((a) => a.id).join(",");
+  useEffect(() => {
+    if (!analysesEnCours) return;
+    const t = setInterval(async () => {
+      const maj = await Promise.all(analysesEnCours.split(",").map((id) => chargerAnalyse(id).catch(() => null)));
+      setAnalyses((l) => l.map((a) => maj.find((m) => m?.id === a.id) || a));
+    }, 3000);
+    return () => clearInterval(t);
+  }, [analysesEnCours]);
+  const ficheAnalyse = analyses.find((a) => a.id === analyseId) || null;
+  const analyse = ficheAnalyse?.statut === "pret" ? ficheAnalyse.resultat : null;
+
   const aller = (t) => { setTab(t); setMenu(false); window.scrollTo({ top: 0 }); };
   // Menu compte : se ferme au clic à côté ou avec Échap.
   const menuRef = useRef(null);
@@ -343,15 +363,34 @@ function Dashboard({ userId, email }) {
     finally { setLoading(""); }
   }
 
-  const lancerAnalyse = () => run("analyse", async () => {
-    setAnalyse(null);
-    const r = await callClaude(
-      "Tu es un expert recrutement et ATS. Réponds UNIQUEMENT avec un objet JSON valide, sans backticks ni texte autour.",
-      `Compare ce CV à cette annonce. JSON exact :
-{"score":<0-100>,"resume":"<une phrase>","presentes":["<mots-clés du CV qui matchent>"],"manquantes":["<attendus mais absents>"],"conseils":["<3-5 conseils concrets>"]}
-CV:\n${cv}\nANNONCE:\n${annonce}`);
-    setAnalyse(r);
-  });
+  // ---------- Analyser la compatibilité : file d'attente + tâche Claude (abonnement, pas de clé API) ----------
+  async function declencherA(id) {
+    const r = await declencherAnalyse(id);
+    setRaisons((m) => ({ ...m, [id]: r.declenche ? "ok" : r.raison }));
+    if (r.session_url) setAnalyses((l) => l.map((a) => (a.id === id ? { ...a, session_url: r.session_url } : a)));
+  }
+  async function lancerAnalyse() {
+    setErr(""); setLoading("analyse");
+    try {
+      const a = await creerAnalyse({
+        offer_id: offreAnalyse, entreprise: entreprise || null, poste: poste || null, annonce, cv_text: cv,
+      });
+      setAnalyses((l) => [a, ...l]);
+      setAnalyseId(a.id);
+      await declencherA(a.id);
+    } catch { setErr("Impossible d'enregistrer la demande d'analyse."); }
+    finally { setLoading(""); }
+  }
+  async function relancerA(id) {
+    setAnalyses((l) => l.map((a) => (a.id === id ? { ...a, statut: "en_attente", erreur: null, created_at: new Date().toISOString() } : a)));
+    try { await relancerAnalyse(id); await declencherA(id); } catch { setErr("Relance impossible."); }
+  }
+  async function supprimerA(id) {
+    const reste = analyses.filter((a) => a.id !== id);
+    setAnalyses(reste);
+    if (analyseId === id) setAnalyseId(reste[0]?.id || null);
+    try { await supprimerAnalyse(id); } catch { setErr("Suppression impossible."); }
+  }
 
   // ---------- Adapter mon CV : file d'attente + tâche Claude (abonnement) ----------
   async function declencher(id) {
@@ -410,7 +449,7 @@ CV:\n${cv}\nANNONCE:\n${annonce}`);
     const o = r.job_offers ?? {};
     setEntreprise(o.company || ""); setPoste(o.title || ""); setContrat(contratDe(o.contract));
     setAnnonce([o.title, [o.company, o.location].filter(Boolean).join(" — "), "", o.description || ""].join("\n"));
-    setAnalyse(null); setMessage(null);
+    setMessage(null); setOffreAnalyse(r.offer_id || null);
     const ann = [o.title, [o.company, o.location].filter(Boolean).join(" — "), "", o.description || ""].join("\n");
     // Le CV du profil (celui du radar) sert de base, sauf si un autre CV est déjà chargé.
     await adapter({ offer_id: r.offer_id, entreprise: o.company, poste: o.title, annonce: ann });
@@ -423,7 +462,7 @@ CV:\n${cv}\nANNONCE:\n${annonce}`);
     });
   };
   const ajouterDepuisAnalyse = () => inserer({
-    entreprise: entreprise || "—", poste: poste || "—", contrat,
+    entreprise: ficheAnalyse?.entreprise || entreprise || "—", poste: ficheAnalyse?.poste || poste || "—", contrat,
     canal: "—", contact: "", statut: "À postuler", score: analyse ? analyse.score : null, source: "manuel",
   });
   const ligneVide = () => inserer({
@@ -544,23 +583,39 @@ TEXTE:\n${ajoutTexte}`);
               </div>
               <div className="flex flex-col gap-1.5">
                 <label htmlFor="ann" className="etiquette">L'annonce</label>
-                <textarea id="ann" value={annonce} onChange={(e) => setAnnonce(e.target.value)} rows={9} placeholder="Colle l'offre ici…" className="zone" />
+                <textarea id="ann" value={annonce} onChange={(e) => { setAnnonce(e.target.value); setOffreAnalyse(null); }} rows={9} placeholder="Colle l'offre ici…" className="zone" />
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
               <button onClick={lancerRefonte} disabled={!annonce} className="btn-noir">Adapter mon CV</button>
-              <button onClick={lancerAnalyse} disabled={loading || !cv || !annonce} className="btn-gris">
-                {loading === "analyse" ? "Analyse en cours…" : "Analyser la compatibilité"}
+              <button onClick={lancerAnalyse} disabled={loading === "analyse" || !cv || !annonce} className="btn-gris">
+                {loading === "analyse" ? "Envoi à Claude…" : "Analyser la compatibilité"}
               </button>
             </div>
+            <ListeAnalyses analyses={analyses} courante={analyseId} onChoisir={setAnalyseId} onSupprimer={supprimerA} />
+            {ficheAnalyse && (ficheAnalyse.statut === "en_attente" || ficheAnalyse.statut === "en_cours") && (
+              <AttenteAnalyse a={ficheAnalyse} raison={raisons[ficheAnalyse.id]} onRelancer={() => relancerA(ficheAnalyse.id)} />
+            )}
+            {ficheAnalyse?.statut === "erreur" && <ErreurAnalyse a={ficheAnalyse} onRelancer={() => relancerA(ficheAnalyse.id)} />}
             {analyse && (
               <div className="carte p-5 sm:p-7 flex flex-col gap-6">
-                <div className="flex flex-col sm:flex-row items-center gap-5"><Gauge score={analyse.score} /><p className="m-0 text-[15px] leading-relaxed">{analyse.resume}</p></div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-                  <div><p className="m-0 mb-2.5 text-sm font-semibold">Points forts</p><div className="flex flex-wrap gap-1.5">{analyse.presentes.map((t, i) => <span key={i} className="puce bg-green-50 text-green-800">{t}</span>)}</div></div>
-                  <div><p className="m-0 mb-2.5 text-sm font-semibold">Manquant</p><div className="flex flex-wrap gap-1.5">{analyse.manquantes.map((t, i) => <span key={i} className="puce bg-red-50 text-red-800">{t}</span>)}</div></div>
+                {(ficheAnalyse.poste || ficheAnalyse.entreprise) && (
+                  <p className="m-0 text-xs font-semibold tracking-[0.06em] uppercase text-stone-500">
+                    {[ficheAnalyse.poste, ficheAnalyse.entreprise].filter(Boolean).join(" · ")}
+                  </p>
+                )}
+                <div className="flex flex-col sm:flex-row items-center gap-5">
+                  <Gauge score={analyse.score} />
+                  <div className="flex flex-col gap-1.5 text-center sm:text-left">
+                    {analyse.verdict && <p className="m-0 text-[17px] font-semibold tracking-tight">{analyse.verdict}</p>}
+                    <p className="m-0 text-[15px] leading-relaxed text-stone-700">{analyse.resume}</p>
+                  </div>
                 </div>
-                <div><p className="m-0 mb-2.5 text-sm font-semibold">Conseils</p><ul className="m-0 p-0 list-none flex flex-col gap-2">{analyse.conseils.map((c, i) => <li key={i} className="text-[15px] flex gap-2.5"><span className="text-stone-400">→</span><span>{c}</span></li>)}</ul></div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+                  <div><p className="m-0 mb-2.5 text-sm font-semibold">Points forts</p><div className="flex flex-wrap gap-1.5">{(analyse.presentes || []).map((t, i) => <span key={i} className="puce bg-green-50 text-green-800">{t}</span>)}</div></div>
+                  <div><p className="m-0 mb-2.5 text-sm font-semibold">Manquant</p><div className="flex flex-wrap gap-1.5">{(analyse.manquantes || []).map((t, i) => <span key={i} className="puce bg-red-50 text-red-800">{t}</span>)}</div></div>
+                </div>
+                <div><p className="m-0 mb-2.5 text-sm font-semibold">Conseils</p><ul className="m-0 p-0 list-none flex flex-col gap-2">{(analyse.conseils || []).map((c, i) => <li key={i} className="text-[15px] flex gap-2.5"><span className="text-stone-400">→</span><span>{c}</span></li>)}</ul></div>
                 <div className="flex flex-wrap gap-2">
                   <button onClick={lancerRefonte} className="btn-noir">Réécrire mon CV</button>
                   <button onClick={lancerMessage} className="btn-gris">Rédiger le message LinkedIn</button>
