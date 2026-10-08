@@ -231,6 +231,46 @@ async function collectJSearch(push: (o: Offer) => void, villes: string[], perDay
   }
 }
 
+// Business France (mon-vie-via.businessfrance.fr) : API publique du site, protégée par une clé exposée
+// dans la page (config Nuxt). On la relit à chaque collecte, avec la dernière connue en secours.
+const BF_CLE_SECOURS = "l+KwpoLPiXlsjxNT/NQ2iOFz8+iuygxAODs9FeAEWYM=";
+const BF_REQUETES = ["data", "IA", "intelligence artificielle", "AI", "analyst", "analytics", "machine learning", "business intelligence", "automatisation", "digital"];
+async function cleBusinessFrance() {
+  try {
+    const r = await fetch("https://mon-vie-via.businessfrance.fr/offres/recherche", { headers: { accept: "text/html" } });
+    const m = (await r.text()).match(/API_KEY:"([^"]+)"/);
+    if (m) return m[1].replace(/\\u002F/g, "/");
+  } catch { /* clé de secours */ }
+  return BF_CLE_SECOURS;
+}
+async function collectBusinessFrance(push: (o: Offer) => void, requetes: string[] = []) {
+  const cle = await cleBusinessFrance();
+  const vus = new Set<number>();
+  for (const q of requetes.length ? requetes : BF_REQUETES) {
+    const d = await getJSON("https://civiweb-api-prd.azurewebsites.net/api/Offers/search", {
+      method: "POST", headers: { "content-type": "application/json", "X-API-KEY": cle },
+      body: JSON.stringify({
+        limit: 100, skip: 0, query: q, activitySectorId: [], missionsTypesIds: [], missionsDurations: [], geographicZones: [],
+        countriesIds: [], studiesLevelId: [], companiesSizes: [], specializationsIds: [], entreprisesIds: [0], missionStartDate: null,
+      }),
+    }, 20000);
+    for (const r of d?.result ?? []) {
+      if (vus.has(r.id) || !isRelevantTitle(strip(r.missionTitle))) continue;
+      vus.add(r.id);
+      const ville = [r.cityName, r.countryName].filter(Boolean).map((x: string) => x.charAt(0) + x.slice(1).toLowerCase()).join(", ");
+      push({
+        source: "Business France VIE", source_id: String(r.id), url: `https://mon-vie-via.businessfrance.fr/offres/${r.id}`,
+        title: strip(r.missionTitle), company: r.organizationName ?? null, location: ville || null, country: r.countryId ?? null,
+        contract: r.missionType === "VIA" ? "VIA" : "VIE", remote: r.teleworkingAvailable ? "remote" : null,
+        salary_min: null, salary_max: null, salary_currency: "EUR",
+        salary_text: r.indemnite ? `${Math.round(r.indemnite)} €/mois (indemnité)` : null,
+        description: strip(`${r.missionDuration ? `Mission de ${r.missionDuration} mois` : ""}${r.missionStartDate ? `, début ${String(r.missionStartDate).slice(0, 10)}` : ""}. ${r.candidateCounter != null ? `${r.candidateCounter} candidat(s) à date. ` : ""}${r.missionDescription ?? ""} ${r.missionProfile ?? ""}`),
+        posted_at: r.startBroadcastDate ? new Date(r.startBroadcastDate).toISOString() : (r.creationDate ?? null),
+      });
+    }
+  }
+}
+
 type Site = { id: string; company: string; ats: string; config: any };
 
 async function collectCareerSite(site: Site, push: (o: Offer) => void) {
@@ -330,6 +370,7 @@ async function collect(db: SupabaseClient, scope: "apis" | "sites" | "all" = "al
     const reqIntl = listeBrief(brief.requetes_intl, 8);
     tasks.push(["France Travail", (p) => collectFranceTravail(p, reqFR), null]);
     tasks.push(["Adzuna", (p) => collectAdzuna(p, countries), null]);
+    if (pb.actif !== false) tasks.push(["Business France VIE", (p) => collectBusinessFrance(p), null]);
     // Palier gratuit JSearch = 200 requêtes / mois → une seule collecte par jour (celle du matin),
     // jamais relancée par le bouton « Actualiser ».
     const today = new Date().toISOString().slice(0, 10);
@@ -584,6 +625,44 @@ async function scoreOuRetri(db: SupabaseClient, userId: string, aiLimit = 36) {
   return scoreUser(db, userId, aiLimit);
 }
 
+// ---------------------------------------------------------------- notifications
+// Push ntfy (appli gratuite) pour les offres publiées récemment et bien notées : postuler tôt.
+// Chaque offre n'est examinée qu'une fois (notified_at), qu'elle déclenche une notif ou non.
+const APP_URL = "https://cvmatch-bice.vercel.app";
+async function notifier(db: SupabaseClient, userId: string) {
+  const { data: prof } = await db.from("search_profiles").select("brief, ntfy_topic").eq("user_id", userId).maybeSingle();
+  if (!prof?.ntfy_topic) return { notif: "pas de canal" };
+  const seuil = Number(prof.brief?.notif_seuil ?? 60);
+  const fraicheurH = Number(prof.brief?.notif_fraicheur_h ?? 72);
+  const { data: rows } = await db.from("offer_matches")
+    .select("offer_id, score, prescore, score_cv_adapte, created_at, job_offers(title, company, location, url, posted_at, source)")
+    .eq("user_id", userId).eq("status", "nouveau").is("notified_at", null).limit(500);
+  if (!rows?.length) return { notif: 0 };
+  const now = Date.now();
+  const note = (r: any) => r.score_cv_adapte ?? r.score ?? r.prescore ?? 0;
+  const age = (r: any) => (now - new Date(r.job_offers?.posted_at || r.created_at).getTime()) / 3600000;
+  const fraiches = (rows as any[]).filter((r) => r.job_offers?.posted_at && age(r) <= fraicheurH && note(r) >= seuil)
+    .sort((a, b) => note(b) - note(a));
+  await db.from("offer_matches").update({ notified_at: new Date().toISOString() })
+    .eq("user_id", userId).in("offer_id", (rows as any[]).map((r) => r.offer_id));
+  if (!fraiches.length) return { notif: 0 };
+  const quand = (r: any) => { const h = Math.max(1, Math.round(age(r))); return h < 24 ? `${h} h` : `${Math.round(h / 24)} j`; };
+  const lignes = fraiches.slice(0, 6).map((r) => `${note(r)} · ${r.job_offers.title} — ${r.job_offers.company ?? "?"} (il y a ${quand(r)})`);
+  if (fraiches.length > 6) lignes.push(`+ ${fraiches.length - 6} autre(s) dans CVMatch`);
+  const une = fraiches.length === 1 ? fraiches[0].job_offers : null;
+  await fetch("https://ntfy.sh/", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      topic: prof.ntfy_topic,
+      title: une ? `Nouvelle offre : ${une.company ?? une.title}` : `${fraiches.length} offres toutes fraîches pour toi`,
+      message: lignes.join("\n"), priority: note(fraiches[0]) >= 75 ? 4 : 3, tags: ["briefcase"],
+      click: une?.url || APP_URL,
+      actions: [{ action: "view", label: "Ouvrir CVMatch", url: APP_URL }],
+    }),
+  }).catch(() => null);
+  return { notif: fraiches.length };
+}
+
 // ---------------------------------------------------------------- serveur
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
@@ -605,7 +684,7 @@ Deno.serve(async (req) => {
     if (body.action === "score_all") {
       const { data: profs } = await db.from("search_profiles").select("user_id");
       const out: Record<string, unknown> = {};
-      for (const p of profs ?? []) out[p.user_id] = await scoreOuRetri(db, p.user_id);
+      for (const p of profs ?? []) out[p.user_id] = { ...(await scoreOuRetri(db, p.user_id)), ...(await notifier(db, p.user_id)) };
       return json({ score: out });
     }
     return json({ error: "action inconnue" }, 400);

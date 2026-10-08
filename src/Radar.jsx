@@ -1,15 +1,35 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  chargerOffres, compterExclues, majMatch, chargerJournal, chargerSites, ajouterSite, majSite, supprimerSite, appelRadar,
+  chargerOffres, chargerDescription, compterExclues, majMatch, chargerJournal, chargerSites, ajouterSite, majSite, supprimerSite, appelRadar,
 } from "./supabase";
 import { tonScore, LEGENDE } from "./ui";
 
 // ---------- utilitaires ----------
 const PISTES = [["all", "Tout"], ["A", "CDI Île-de-France"], ["B", "International"], ["VIE", "VIE"]];
-const SEUILS = [[0, "Score"], [50, "50+"], [75, "75+"], [85, "85+"]];
+const SEUILS = [[0, "Tous"], [50, "50+"], [60, "60+"], [70, "70+"], [75, "75+"], [85, "85+"]];
+const PERIODES = [[0, "Toutes"], [1, "24 h"], [3, "3 jours"], [7, "7 jours"], [14, "14 jours"], [30, "30 jours"]];
+const TRIS = [["score", "Meilleur score"], ["recent", "Plus récentes"], ["salaire", "Meilleur salaire"]];
+const CONTRATS = ["CDI", "VIE", "CDD", "—"];
+const SOURCES = [["sites", "Sites carrières"], ["Business France VIE", "Business France (VIE)"], ["Adzuna", "Adzuna"], ["JSearch", "JSearch"], ["France Travail", "France Travail"]];
+const NOTES = [["toutes", "Toutes"], ["ia", "Notées par l'IA"], ["pre", "Pré-score seulement"]];
+const FILTRES_VIDES = { seuil: 0, periode: 0, contrats: [], sources: [], pays: [], secteurs: [], note: "toutes", salaire: false, remote: false };
+const famille = (src = "") => (src.startsWith("Carrières") ? "sites" : src.startsWith("JSearch") ? "JSearch" : src);
+const nomPays = (() => {
+  let dn = null;
+  try { dn = new Intl.DisplayNames(["fr"], { type: "region" }); } catch { /* vieux navigateur */ }
+  return (cc) => (cc === "—" ? "Non précisé" : (dn?.of(cc) ?? cc));
+})();
+const paysOf = (o) => (/^[A-Z]{2}$/.test((o.country ?? "").toUpperCase()) ? o.country.toUpperCase() : "—");
+const datePub = (r) => new Date(r.job_offers?.posted_at || r.created_at).getTime() || 0;
+const lireFiltres = () => {
+  try { return { ...FILTRES_VIDES, ...JSON.parse(localStorage.getItem("cvmatch.filtres") || "{}") }; } catch { return FILTRES_VIDES; }
+};
+const nbActifs = (f) =>
+  (f.seuil ? 1 : 0) + (f.periode ? 1 : 0) + f.contrats.length + f.sources.length + f.pays.length + f.secteurs.length
+  + (f.note !== "toutes" ? 1 : 0) + (f.salaire ? 1 : 0) + (f.remote ? 1 : 0);
 const VUES = [["a_voir", "À regarder"], ["nouveau", "Nouvelles"], ["ajoute", "Ajoutées au suivi"], ["ignore", "Ignorées"]];
 const pisteLabel = { A: "CDI IDF", B: "International", VIE: "VIE" };
-const API_SOURCES = ["France Travail", "Adzuna", "JSearch"];
+const API_SOURCES = ["France Travail", "Adzuna", "JSearch", "Business France VIE"];
 // Note affichée : celle du CV adapté si « Adapter mon CV » a tourné, sinon la note IA du CV de base.
 const scoreOf = (r) => r.score_cv_adapte ?? r.score ?? r.prescore ?? 0;
 function ilYa(d) {
@@ -48,6 +68,64 @@ export function parseSiteUrl(raw) {
   return null;
 }
 
+// ---------- panneau de filtres ----------
+function Puce({ actif, onClick, children }) {
+  return (
+    <button type="button" onClick={onClick} aria-pressed={actif}
+      className={`h-9 px-3.5 rounded-full text-[13.5px] font-semibold transition ${actif ? "bg-ink text-white" : "bg-stone-100 text-stone-700 hover:text-ink"}`}>
+      {children}
+    </button>
+  );
+}
+function Groupe({ titre, children }) {
+  return (
+    <div className="flex flex-col gap-2 min-w-0">
+      <span className="text-[12px] font-semibold uppercase tracking-[0.08em] text-stone-500">{titre}</span>
+      <div className="flex flex-wrap gap-1.5">{children}</div>
+    </div>
+  );
+}
+function PanneauFiltres({ f, setF, options, total, onFermer }) {
+  const bascule = (cle, v) => setF((x) => ({ ...x, [cle]: x[cle].includes(v) ? x[cle].filter((y) => y !== v) : [...x[cle], v] }));
+  return (
+    <div className="carte p-5 sm:p-6 flex flex-col gap-5">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-x-8 gap-y-5">
+        <Groupe titre="Score minimum">
+          {SEUILS.map(([v, l]) => <Puce key={v} actif={f.seuil === v} onClick={() => setF((x) => ({ ...x, seuil: v }))}>{l}</Puce>)}
+        </Groupe>
+        <Groupe titre="Date de publication">
+          {PERIODES.map(([v, l]) => <Puce key={v} actif={f.periode === v} onClick={() => setF((x) => ({ ...x, periode: v }))}>{l}</Puce>)}
+        </Groupe>
+        <Groupe titre="Contrat">
+          {CONTRATS.map((c) => <Puce key={c} actif={f.contrats.includes(c)} onClick={() => bascule("contrats", c)}>{c === "—" ? "Non précisé" : c}</Puce>)}
+        </Groupe>
+        <Groupe titre="Source">
+          {SOURCES.map(([v, l]) => <Puce key={v} actif={f.sources.includes(v)} onClick={() => bascule("sources", v)}>{l}</Puce>)}
+        </Groupe>
+        {options.secteurs.length > 0 && (
+          <Groupe titre="Type d'entreprise">
+            {options.secteurs.map(([v, n]) => <Puce key={v} actif={f.secteurs.includes(v)} onClick={() => bascule("secteurs", v)}>{v} <span className="opacity-50 font-normal">{n}</span></Puce>)}
+          </Groupe>
+        )}
+        <Groupe titre="Pays">
+          {options.pays.map(([v, n]) => <Puce key={v} actif={f.pays.includes(v)} onClick={() => bascule("pays", v)}>{nomPays(v)} <span className="opacity-50 font-normal">{n}</span></Puce>)}
+        </Groupe>
+        <Groupe titre="Note">
+          {NOTES.map(([v, l]) => <Puce key={v} actif={f.note === v} onClick={() => setF((x) => ({ ...x, note: v }))}>{l}</Puce>)}
+        </Groupe>
+        <Groupe titre="Autres">
+          <Puce actif={f.salaire} onClick={() => setF((x) => ({ ...x, salaire: !x.salaire }))}>Salaire affiché</Puce>
+          <Puce actif={f.remote} onClick={() => setF((x) => ({ ...x, remote: !x.remote }))}>Remote</Puce>
+        </Groupe>
+      </div>
+      <div className="flex gap-2 pt-1">
+        <button type="button" onClick={() => setF(FILTRES_VIDES)} disabled={!nbActifs(f)} className="btn-gris btn-sm">Réinitialiser</button>
+        <button type="button" onClick={onFermer} className="btn-noir btn-sm ml-auto">Voir {total} offre{total > 1 ? "s" : ""}</button>
+      </div>
+    </div>
+  );
+}
+
 // ---------- carte offre ----------
 // Lien de candidature : l'annonce d'origine, sinon une recherche Google du poste.
 const lienPostuler = (o) =>
@@ -59,7 +137,10 @@ function OffreCard({ r, ouvert, onToggle, onAdapter, onSuivi, onPostule, onIgnor
   const pre = r.scored_by !== "ia";
   const s = scoreOf(r);
   const t = tonScore(s);
-  const sal = salaire(o);
+  const sal = salaire(o) ?? o.salary_text;
+  // Publiée il y a moins de 48 h : postuler tôt augmente les chances d'être lu.
+  const heures = o.posted_at ? (Date.now() - new Date(o.posted_at)) / 3600000 : null;
+  const fraiche = heures != null && heures >= 0 && heures < 48;
   const raisons = Array.isArray(r.reasons) ? r.reasons : [];
   const resume = r.verdict || raisons[0];
   return (
@@ -82,6 +163,7 @@ function OffreCard({ r, ouvert, onToggle, onAdapter, onSuivi, onPostule, onIgnor
       </button>
 
       <div className="flex flex-wrap items-center gap-1.5">
+        {fraiche && <span className="puce bg-ink text-white font-semibold" title="Publiée il y a moins de 48 h">Tout frais · {ilYa(o.posted_at)}</span>}
         <span className="text-[13px] font-semibold" style={{ color: t.fg }}>{t.label}</span>
         {r.piste && <span className="puce bg-stone-100 font-medium">{pisteLabel[r.piste]}</span>}
         {o.contract && o.contract !== r.piste && <span className="puce bg-stone-100">{o.contract}</span>}
@@ -98,6 +180,7 @@ function OffreCard({ r, ouvert, onToggle, onAdapter, onSuivi, onPostule, onIgnor
               {raisons.slice(0, 6).map((x, i) => <li key={i} className="text-[13.5px] text-stone-600 flex gap-2"><span className="text-stone-400">→</span><span>{x}</span></li>)}
             </ul>
           )}
+          {o.description === undefined && <p className="m-0 text-[13px] text-stone-500">Chargement de l'annonce…</p>}
           {o.description && (
             <p className="m-0 text-[13px] leading-relaxed text-stone-600 bg-stone-100 rounded-xl p-3.5 max-h-60 overflow-auto whitespace-pre-line break-words">
               {o.description.slice(0, 2500)}{o.description.length > 2500 ? "…" : ""}
@@ -108,7 +191,7 @@ function OffreCard({ r, ouvert, onToggle, onAdapter, onSuivi, onPostule, onIgnor
 
       <div className="mt-auto flex flex-col gap-3">
         <div className="flex items-baseline gap-3 text-[12.5px] text-stone-500">
-          <span className="min-w-0 truncate">{o.source} · {ilYa(o.posted_at || r.created_at)}{(raisons.length > 1 || o.description) && <> · <button onClick={onToggle} className="underline underline-offset-2 hover:text-ink">{ouvert ? "moins" : "détails"}</button></>}</span>
+          <span className="min-w-0 truncate">{o.source} · {ilYa(o.posted_at || r.created_at)}{<> · <button onClick={onToggle} className="underline underline-offset-2 hover:text-ink">{ouvert ? "moins" : "détails"}</button></>}</span>
           {r.status === "ignore"
             ? <button onClick={onRestaurer} className="ml-auto shrink-0 hover:text-ink">Restaurer</button>
             : <button onClick={onIgnorer} className="ml-auto shrink-0 hover:text-red-700">Pas pour moi</button>}
@@ -176,14 +259,14 @@ function Sources({ journal, sites, setSites, setMsg }) {
     <div className="grid grid-cols-1 lg:grid-cols-5 gap-3">
       <div className="lg:col-span-2 carte p-5 min-w-0">
         <p className="m-0 text-[15px] font-semibold">Agrégateurs</p>
-        <p className="mt-1 mb-4 text-[13px] text-stone-600">France Travail, Adzuna (19 pays) et Google for Jobs via JSearch (LinkedIn, Indeed, Glassdoor…).</p>
+        <p className="mt-1 mb-4 text-[13px] text-stone-600">France Travail, Adzuna, Google for Jobs via JSearch (LinkedIn, Indeed, Glassdoor…) et les VIE de Business France.</p>
         <ul className="m-0 p-0 list-none flex flex-col gap-2.5">
           {API_SOURCES.map((s) => {
             const [dot, txt] = etat(dernier[s]);
             return (
               <li key={s} className="flex items-center gap-2.5 text-sm">
                 <span className={`w-2 h-2 rounded-full shrink-0 ${dot}`} />
-                <span className="font-semibold w-28 shrink-0">{s}</span>
+                <span className="font-semibold w-28 shrink-0 truncate" title={s}>{s === "Business France VIE" ? "Business France" : s}</span>
                 <span className="text-[13px] text-stone-600 truncate">{txt}</span>
               </li>
             );
@@ -244,7 +327,9 @@ export default function Radar({ onAdapter, onSuivi }) {
   const [busy, setBusy] = useState("");
   const [msg, setMsg] = useState("");
   const [piste, setPiste] = useState("all");
-  const [seuil, setSeuil] = useState(0);
+  const [f, setF] = useState(lireFiltres);
+  const [tri, setTri] = useState("score");
+  const [voirFiltres, setVoirFiltres] = useState(false);
   const [vue, setVue] = useState("a_voir");
   const [q, setQ] = useState("");
   const [ouvert, setOuvert] = useState(null);
@@ -256,6 +341,7 @@ export default function Radar({ onAdapter, onSuivi }) {
     setRows(o); setExclues(x); setJournal(j); setSites(s);
   }
   useEffect(() => { recharger().catch((e) => setMsg(e.message)).finally(() => setCharge(false)); }, []);
+  useEffect(() => { try { localStorage.setItem("cvmatch.filtres", JSON.stringify(f)); } catch { /* stockage indisponible */ } setNb(30); }, [f]);
   useEffect(() => { if (!msg) return; const t = setTimeout(() => setMsg(""), 6000); return () => clearTimeout(t); }, [msg]);
 
   async function lancer(action) {
@@ -284,16 +370,65 @@ export default function Radar({ onAdapter, onSuivi }) {
   const patch = (id, p) => setRows((l) => l.map((r) => (r.offer_id === id ? { ...r, ...p } : r)));
   const statut = async (r, status) => { patch(r.offer_id, { status }); try { await majMatch(r.offer_id, { status }); } catch { /* optimiste */ } };
   const marquerVu = (r) => { if (r.status === "nouveau") statut(r, "vu"); };
+  // La description n'est pas chargée avec la liste : on la récupère à l'ouverture ou avant « Adapter mon CV ».
+  async function avecDescription(r) {
+    if (r.job_offers?.description !== undefined) return r;
+    let d = "";
+    try { d = await chargerDescription(r.offer_id); } catch { /* annonce sans texte */ }
+    const r2 = { ...r, job_offers: { ...r.job_offers, description: d } };
+    patch(r.offer_id, { job_offers: r2.job_offers });
+    return r2;
+  }
+  const secteurDe = useMemo(() => {
+    const m = new Map();
+    for (const s of sites) if (s.sector) m.set((s.company ?? "").toLowerCase(), s.sector);
+    return (o) => m.get((o.company ?? "").toLowerCase()) ?? null;
+  }, [sites]);
 
-  const filtrees = useMemo(() => {
+  // Base = vue + piste + recherche ; les options du panneau (pays, secteurs) sont comptées dessus.
+  const base = useMemo(() => {
     const nq = q.trim().toLowerCase();
     return rows
       .filter((r) => (vue === "a_voir" ? ["nouveau", "vu"].includes(r.status) : r.status === vue))
       .filter((r) => piste === "all" || r.piste === piste)
-      .filter((r) => scoreOf(r) >= seuil)
-      .filter((r) => !nq || `${r.job_offers?.title} ${r.job_offers?.company} ${r.job_offers?.location}`.toLowerCase().includes(nq))
-      .sort((a, b) => scoreOf(b) - scoreOf(a) || new Date(b.job_offers?.posted_at || b.created_at) - new Date(a.job_offers?.posted_at || a.created_at));
-  }, [rows, vue, piste, seuil, q]);
+      .filter((r) => !nq || `${r.job_offers?.title} ${r.job_offers?.company} ${r.job_offers?.location}`.toLowerCase().includes(nq));
+  }, [rows, vue, piste, q]);
+
+  const options = useMemo(() => {
+    const compte = (fn) => {
+      const m = new Map();
+      for (const r of base) { const k = fn(r.job_offers ?? {}); if (k) m.set(k, (m.get(k) ?? 0) + 1); }
+      return [...m.entries()].sort((a, b) => b[1] - a[1]);
+    };
+    const pays = compte(paysOf);
+    // Pays rares regroupés en bas, « Non précisé » en dernier ; on garde les filtres déjà cochés.
+    const top = pays.filter(([k]) => k !== "—").slice(0, 14);
+    for (const k of f.pays) if (!top.some(([x]) => x === k)) top.push([k, pays.find(([x]) => x === k)?.[1] ?? 0]);
+    const nd = pays.find(([k]) => k === "—");
+    return { pays: nd ? [...top, nd] : top, secteurs: compte(secteurDe) };
+  }, [base, secteurDe, f.pays]);
+
+  const filtrees = useMemo(() => {
+    const depuis = f.periode ? Date.now() - f.periode * 86400000 : 0;
+    const sal = (r) => r.job_offers?.salary_max || r.job_offers?.salary_min || 0;
+    const ordre = {
+      score: (a, b) => scoreOf(b) - scoreOf(a) || datePub(b) - datePub(a),
+      recent: (a, b) => datePub(b) - datePub(a) || scoreOf(b) - scoreOf(a),
+      salaire: (a, b) => sal(b) - sal(a) || scoreOf(b) - scoreOf(a),
+    }[tri];
+    return base
+      .filter((r) => scoreOf(r) >= f.seuil)
+      .filter((r) => !depuis || datePub(r) >= depuis)
+      .filter((r) => !f.contrats.length || f.contrats.includes(["CDI", "VIE", "CDD"].includes(r.job_offers?.contract) ? r.job_offers.contract : "—"))
+      .filter((r) => !f.sources.length || f.sources.includes(famille(r.job_offers?.source)))
+      .filter((r) => !f.pays.length || f.pays.includes(paysOf(r.job_offers ?? {})))
+      .filter((r) => !f.secteurs.length || f.secteurs.includes(secteurDe(r.job_offers ?? {})))
+      .filter((r) => f.note === "toutes" || (f.note === "ia" ? r.scored_by === "ia" : r.scored_by !== "ia"))
+      .filter((r) => !f.salaire || sal(r) > 0)
+      .filter((r) => !f.remote || r.job_offers?.remote)
+      .sort(ordre);
+  }, [base, f, tri, secteurDe]);
+  const actifs = nbActifs(f);
 
   const actives = rows.filter((r) => ["nouveau", "vu"].includes(r.status));
   const nouvelles = rows.filter((r) => r.status === "nouveau").length;
@@ -339,8 +474,14 @@ export default function Radar({ onAdapter, onSuivi }) {
         <div className="flex flex-wrap gap-2 items-center">
           <input value={q} onChange={(e) => setQ(e.target.value)} aria-label="Rechercher" placeholder="Rechercher un titre, une entreprise, une ville…"
             className="h-11 basis-full sm:basis-auto sm:flex-1 min-w-0 px-4 rounded-xl bg-white text-sm outline-none border border-transparent focus:border-ink" />
-          <select aria-label="Score minimum" value={seuil} onChange={(e) => setSeuil(+e.target.value)} className={selectCls}>
-            {SEUILS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+          <button onClick={() => setVoirFiltres((v) => !v)} aria-expanded={voirFiltres}
+            className={`h-11 px-4 shrink-0 rounded-xl text-sm font-semibold transition inline-flex items-center gap-2 ${voirFiltres ? "bg-ink text-white" : "bg-white hover:text-ink text-stone-700"}`}>
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M2 4h12M4.5 8h7M7 12h2" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" /></svg>
+            Filtres
+            {actifs > 0 && <span className={`min-w-5 h-5 px-1.5 rounded-full text-[11.5px] leading-5 text-center ${voirFiltres ? "bg-white text-ink" : "bg-ink text-white"}`}>{actifs}</span>}
+          </button>
+          <select aria-label="Trier par" value={tri} onChange={(e) => setTri(e.target.value)} className={selectCls}>
+            {TRIS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
           </select>
           <select aria-label="Vue" value={vue} onChange={(e) => setVue(e.target.value)} className={selectCls}>
             {VUES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
@@ -352,6 +493,14 @@ export default function Radar({ onAdapter, onSuivi }) {
         </div>
       </div>
 
+      {voirFiltres && <PanneauFiltres f={f} setF={setF} options={options} total={filtrees.length} onFermer={() => setVoirFiltres(false)} />}
+      {!voirFiltres && actifs > 0 && (
+        <div className="flex flex-wrap items-center gap-2 -mt-2 text-[13px] text-stone-600">
+          <span>{filtrees.length} offre{filtrees.length > 1 ? "s" : ""} sur {base.length} avec {actifs} filtre{actifs > 1 ? "s" : ""}</span>
+          <button onClick={() => setF(FILTRES_VIDES)} className="underline underline-offset-2 hover:text-ink">tout effacer</button>
+        </div>
+      )}
+
       {voirSources && <Sources journal={journal} sites={sites} setSites={setSites} setMsg={setMsg} />}
 
       {/* Liste */}
@@ -360,16 +509,16 @@ export default function Radar({ onAdapter, onSuivi }) {
       ) : filtrees.length === 0 ? (
         <div className="carte p-10 text-center">
           <p className="m-0 text-[15px] font-semibold">{rows.length ? "Aucune offre avec ces filtres." : "Pas encore d'offres."}</p>
-          <p className="mt-1.5 mb-0 text-sm text-stone-600">{rows.length ? "Élargis la piste ou baisse le score minimum." : "Clique sur « Actualiser » ou attends la collecte de demain matin."}</p>
+          <p className="mt-1.5 mb-0 text-sm text-stone-600">{rows.length ? "Élargis la piste ou retire des filtres." : "Clique sur « Actualiser » ou attends la collecte de demain matin."}</p>
         </div>
       ) : (
         <>
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
             {filtrees.slice(0, nb).map((r) => (
               <OffreCard key={r.offer_id} r={r} ouvert={ouvert === r.offer_id}
-                onToggle={() => { setOuvert(ouvert === r.offer_id ? null : r.offer_id); marquerVu(r); }}
+                onToggle={() => { const o = ouvert === r.offer_id; setOuvert(o ? null : r.offer_id); marquerVu(r); if (!o) avecDescription(r); }}
                 onLien={(e) => { e.stopPropagation(); marquerVu(r); }}
-                onAdapter={() => { marquerVu(r); onAdapter(r); }}
+                onAdapter={async () => { marquerVu(r); onAdapter(await avecDescription(r)); }}
                 onSuivi={async () => { try { await onSuivi(r); await statut(r, "ajoute"); setMsg("Ajoutée au suivi."); } catch { setMsg("Ajout au suivi impossible."); } }}
                 onPostule={async () => { try { await onSuivi(r, "Envoyée"); await statut(r, "ajoute"); setMsg("Candidature ajoutée au suivi (Envoyée)."); } catch { setMsg("Ajout au suivi impossible."); } }}
                 onIgnorer={() => statut(r, "ignore")}

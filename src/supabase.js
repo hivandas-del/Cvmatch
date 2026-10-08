@@ -39,15 +39,28 @@ export async function supprimerCandidature(id) {
 }
 
 // ---------- Radar d'offres ----------
+// Sans la description (lourde) : elle est chargée à la demande (détails, « Adapter mon CV »).
+// Pagination par 1 000 (plafond PostgREST) pour ne rater aucune offre à regarder.
+const CHAMPS_OFFRE = "id, source, url, title, company, location, country, contract, remote, salary_min, salary_max, salary_currency, salary_text, posted_at";
 export async function chargerOffres() {
-  const { data, error } = await supabase
-    .from("offer_matches")
-    .select("offer_id, piste, prescore, score, score_cv_adapte, verdict, reasons, scored_by, status, created_at, job_offers(*)")
-    .neq("status", "exclu")
-    .order("created_at", { ascending: false })
-    .limit(600);
+  const out = [];
+  for (let page = 0; page < 5; page++) {
+    const { data, error } = await supabase
+      .from("offer_matches")
+      .select(`offer_id, piste, prescore, score, score_cv_adapte, verdict, reasons, scored_by, status, created_at, job_offers(${CHAMPS_OFFRE})`)
+      .neq("status", "exclu")
+      .order("created_at", { ascending: false })
+      .range(page * 1000, page * 1000 + 999);
+    if (error) throw error;
+    out.push(...data);
+    if (data.length < 1000) break;
+  }
+  return out;
+}
+export async function chargerDescription(offerId) {
+  const { data, error } = await supabase.from("job_offers").select("description").eq("id", offerId).maybeSingle();
   if (error) throw error;
-  return data;
+  return data?.description ?? "";
 }
 export async function compterExclues() {
   const { count } = await supabase.from("offer_matches").select("offer_id", { count: "exact", head: true }).eq("status", "exclu");
