@@ -1,8 +1,9 @@
 // Radar d'offres : collecte quotidienne multi-sources + scoring selon le brief et le CV.
 // Actions :
-//   - cron (en-tête x-radar-secret) : {action:"collect", scope:"apis"|"sites"|"all"} | {action:"score_all"}
+//   - cron (en-tête x-radar-secret) : {action:"collect", scope:"apis"|"web"|"sites"|"all"} | {action:"score_all"}
+//                                     | {action:"test_web", source} (aperçu d'un job board, sans enregistrer)
 //                                     scope "sites" sans part → relance un appel par lot de 10 sites ({part, parts, score_user?})
-//   - utilisateur connecté (JWT)    : {action:"refresh"} (collecte API si > 3 h + scoring) | {action:"collect_sites"}
+//   - utilisateur connecté (JWT)    : {action:"refresh"} (collecte API si > 3 h, job boards en arrière-plan, + scoring) | {action:"collect_sites"}
 //                                     | {action:"score"} | {action:"rescore"} (re-tri complet après un nouveau profil)
 //                                     | {action:"test_site", site:{company, ats, config}}
 // Déployée avec verify_jwt = false : l'authentification est faite ici (secret Vault pour le cron, JWT sinon).
@@ -36,7 +37,7 @@ type Offer = {
 };
 
 const decode = (s: string) =>
-  s.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&nbsp;/g, " ")
+  s.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&nbsp;/g, " ").replace(/&hellip;/g, "…")
     .replace(/&#x([0-9a-f]{1,6});/gi, (_, h) => String.fromCodePoint(parseInt(h, 16)))
     .replace(/&#(\d{1,7});/g, (_, d) => String.fromCodePoint(+d))
     .replace(/&amp;/g, "&");
@@ -271,6 +272,228 @@ async function collectBusinessFrance(push: (o: Offer) => void, requetes: string[
   }
 }
 
+// ---------------------------------------------------------------- sites d'emploi (sans clé)
+// ZipRecruiter, Indeed, Glassdoor, Jooble, Cadremploi et l'APEC renvoient une page anti-robot (Cloudflare / DataDome)
+// aux serveurs : on ne les force pas. Leurs annonces arrivent en partie via JSearch (Google for Jobs).
+// Ici, les job boards qui répondent normalement : Welcome to the Jungle, LinkedIn, HelloWork, Jobijoba.
+const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0 Safari/537.36";
+async function getHTML(url: string, timeoutMs = 20000) {
+  const r = await fetch(url, {
+    headers: { "user-agent": UA, accept: "text/html,application/xhtml+xml,*/*;q=0.8", "accept-language": "fr-FR,fr;q=0.9,en;q=0.7" },
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  if (!r.ok) throw new Error(`${r.status} ${new URL(url).host}`);
+  return await r.text();
+}
+const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
+// Texte compris entre deux marqueurs (sans regex : les pages font plusieurs centaines de Ko).
+function entre(s: string, a: string, b: string, from = 0) {
+  const i = s.indexOf(a, from);
+  if (i < 0) return null;
+  const j = s.indexOf(b, i + a.length);
+  return j < 0 ? null : s.slice(i + a.length, j);
+}
+// Contenu d'une balise ouverte par `a` (on saute la fin de la balise ouvrante « …> »).
+const contenu = (s: string, a: string, fin: string) => {
+  const x = entre(s, a, fin);
+  return x == null ? null : strip(x.slice(x.indexOf(">") + 1));
+};
+
+// « il y a 3 jours », « hier », « 3 octobre » → date ISO approximative.
+const MOIS = ["janvier", "fevrier", "mars", "avril", "mai", "juin", "juillet", "aout", "septembre", "octobre", "novembre", "decembre"];
+function dateFr(s: unknown): string | null {
+  const x = norm(s);
+  if (!x) return null;
+  const now = Date.now();
+  if (/aujourd hui|a l instant|minute/.test(x)) return new Date(now).toISOString();
+  if (/\bhier\b/.test(x)) return new Date(now - 86400000).toISOString();
+  const r = x.match(/(\d+)\s*(heures?|h|jours?|semaines?|mois)\b/);
+  if (r) {
+    const u = r[2].startsWith("h") ? 3600000 : r[2].startsWith("j") ? 86400000 : r[2].startsWith("s") ? 7 * 86400000 : 30 * 86400000;
+    return new Date(now - Number(r[1]) * u).toISOString();
+  }
+  const d = x.match(new RegExp(`(\\d{1,2})\\s+(${MOIS.join("|")})(?:\\s+(\\d{4}))?`));
+  if (d) {
+    const y = d[3] ? +d[3] : new Date().getUTCFullYear();
+    let t = Date.UTC(y, MOIS.indexOf(d[2]), +d[1], 8);
+    if (!d[3] && t > now + 86400000) t = Date.UTC(y - 1, MOIS.indexOf(d[2]), +d[1], 8);
+    return new Date(t).toISOString();
+  }
+  return null;
+}
+// « 55 000 € / an », « De 2 500 € à 3 000 € par mois » → salaire annuel [min, max]
+function salaireFr(s: string | null): [number | null, number | null] {
+  if (!s || !/€|eur/i.test(s)) return [null, null];
+  const nums = [...s.matchAll(/(\d[\d\s\u202f\u00a0.]*(?:[.,]\d+)?)\s*(k)?\s*(?:€|eur)/gi)]
+    .map((m) => parseFloat(m[1].replace(/[\s\u202f\u00a0.]/g, "").replace(",", ".")) * (m[2] ? 1000 : 1)).filter((n) => n > 0);
+  if (!nums.length) return [null, null];
+  const k = /mois|mensuel/i.test(s) ? 12 : /heure|horaire/i.test(s) ? 1607 : 1;
+  const v = nums.map((n) => Math.round(n * k));
+  return [v[0] ?? null, v[1] ?? v[0] ?? null];
+}
+
+const WEB_SOURCES = ["Welcome to the Jungle", "LinkedIn", "HelloWork", "Jobijoba"];
+const SOURCES_IDF = new Set(["France Travail", ...WEB_SOURCES]);
+const WEB_QUERIES = ["data analyst", "data scientist", "consultant data", "consultant IA", "intelligence artificielle",
+  "analytics engineer", "product owner data", "power bi", "automatisation"];
+const webBase = (o: Partial<Offer>): Offer => ({
+  source: "", source_id: "", url: null, title: "", company: null, location: null, country: "FR", contract: null, remote: null,
+  salary_min: null, salary_max: null, salary_currency: null, salary_text: null, description: null, posted_at: null, ...o,
+} as Offer);
+
+// Welcome to the Jungle : index Algolia public du site (clé de recherche exposée dans la page).
+const WTTJ = { app: "CSEKHVMS53", key: "4bd8f6215d0cc52b26430765769e65a0", index: "wttj_jobs_production_fr" };
+const WTTJ_CONTRATS: Record<string, string> = {
+  full_time: "CDI", temporary: "CDD", vie: "VIE", internship: "Stage", apprenticeship: "Alternance", freelance: "Freelance",
+};
+async function collectWTTJ(push: (o: Offer) => void, requetes: string[], paysB: string[]) {
+  const depuis = Math.floor(Date.now() / 1000) - 8 * 86400;
+  const base = `published_at_timestamp > ${depuis} AND NOT contract_type:internship AND NOT contract_type:apprenticeship AND NOT contract_type:freelance`;
+  const zones = [`offices.state:"Île-de-France"`];
+  if (paysB.length) zones.push(`(${paysB.map((c) => `offices.country_code:${c}`).join(" OR ")})`);
+  const requests = requetes.flatMap((q) => zones.map((z) => ({
+    indexName: WTTJ.index,
+    params: new URLSearchParams({
+      query: q, hitsPerPage: "60", filters: `${base} AND ${z}`,
+      attributesToRetrieve: JSON.stringify(["reference", "name", "slug", "organization.name", "organization.slug", "offices", "contract_type",
+        "remote", "published_at", "summary", "key_missions", "profile", "experience_level_minimum", "salary_minimum",
+        "salary_maximum", "salary_period", "salary_currency", "language"]),
+      attributesToHighlight: "[]",
+    }).toString(),
+  })));
+  const d = await getJSON(`https://${WTTJ.app}-dsn.algolia.net/1/indexes/*/queries`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json", "x-algolia-application-id": WTTJ.app, "x-algolia-api-key": WTTJ.key,
+      referer: "https://www.welcometothejungle.com/", origin: "https://www.welcometothejungle.com",
+    },
+    body: JSON.stringify({ requests }),
+  }, 25000);
+  const vus = new Set<string>();
+  for (const res of d?.results ?? []) {
+    for (const h of res.hits ?? []) {
+      if (vus.has(h.reference)) continue;
+      vus.add(h.reference);
+      const bureau = (h.offices ?? []).find((o: any) => /ile de france/.test(norm(o.state))) ?? h.offices?.[0] ?? {};
+      const k = h.salary_period === "monthly" ? 12 : h.salary_period === "daily" ? 218 : h.salary_period === "hourly" ? 1607 : 1;
+      const smin = h.salary_minimum ? Math.round(h.salary_minimum * k) : null, smax = h.salary_maximum ? Math.round(h.salary_maximum * k) : null;
+      const exp = Number(h.experience_level_minimum ?? 0);
+      push(webBase({
+        source: "Welcome to the Jungle", source_id: h.reference,
+        url: h.organization?.slug && h.slug ? `https://www.welcometothejungle.com/fr/companies/${h.organization.slug}/jobs/${h.slug}` : null,
+        title: strip(h.name), company: h.organization?.name ?? null,
+        location: [bureau.city, bureau.country].filter(Boolean).join(", ") || null, country: bureau.country_code ?? null,
+        contract: WTTJ_CONTRATS[h.contract_type] ?? null, remote: h.remote === "fulltime" ? "remote" : null,
+        salary_min: smin, salary_max: smax ?? smin, salary_currency: h.salary_currency ?? (smin ? "EUR" : null),
+        salary_text: smin ? `${smin}${smax && smax !== smin ? `-${smax}` : ""} ${h.salary_currency ?? "EUR"}/an` : null,
+        description: strip([h.summary, ...(h.key_missions ?? []), h.profile, exp >= 1 ? `Expérience : ${Math.round(exp)} ans minimum` : ""].filter(Boolean).join(" ")),
+        posted_at: h.published_at ?? null,
+      }));
+    }
+  }
+}
+
+// LinkedIn : pages publiques « jobs-guest » (sans connexion), Île-de-France, niveaux « Premier emploi » et « Associé ».
+// La fiche détaillée (description, type de contrat) n'est chargée que pour les intitulés pertinents.
+async function collectLinkedIn(push: (o: Offer) => void, requetes: string[]) {
+  const cartes = new Map<string, Offer>();
+  let echecs = 0;
+  for (const q of requetes) {
+    for (const start of [0, 10]) {
+      const p = new URLSearchParams({ keywords: q, geoId: "104246759", f_TPR: "r604800", f_E: "2,3", start: String(start) });
+      let html = "";
+      try { html = await getHTML(`https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?${p}`); }
+      catch (e) { if (++echecs > 3) throw e; }
+      const bs = html.split('data-entity-urn="urn:li:jobPosting:').slice(1);
+      for (const b of bs) {
+        const id = b.slice(0, b.indexOf('"'));
+        const title = contenu(b, 'base-search-card__title"', "</h3>") ?? "";
+        if (!id || cartes.has(id) || !isRelevantTitle(title)) continue;
+        cartes.set(id, webBase({
+          source: "LinkedIn", source_id: id, url: `https://www.linkedin.com/jobs/view/${id}/`, title,
+          company: contenu(b, 'base-search-card__subtitle"', "</h4>"), location: contenu(b, 'job-search-card__location"', "</span>"),
+          posted_at: entre(b, 'datetime="', '"'),
+        }));
+      }
+      await pause(900);
+      if (bs.length < 10) break;
+    }
+  }
+  const aDetailler = [...cartes.values()].filter((o) => !QUICK_EXCLUDE.test(norm(o.title))).slice(0, 40);
+  await pool(aDetailler, 2, async (o) => {
+    const h = await getHTML(`https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/${o.source_id}`).catch(() => null);
+    await pause(500);
+    if (!h) return;
+    o.description = contenu(h, "show-more-less-html__markup", "</div>");
+    const criteres = h.split("description__job-criteria-text").slice(1).map((c) => strip(c.slice(c.indexOf(">") + 1, c.indexOf("</"))));
+    o.contract = contractFrom(criteres.join(" "));
+  });
+  for (const o of cartes.values()) push(o);
+}
+
+// HelloWork : page de résultats (CDI, Paris + 20 km, publiées depuis 1 semaine).
+async function collectHelloWork(push: (o: Offer) => void, requetes: string[]) {
+  const vus = new Set<string>();
+  let echecs = 0;
+  for (const q of requetes) {
+    let html = "";
+    try { html = await getHTML(`https://www.hellowork.com/fr-fr/emploi/recherche.html?${new URLSearchParams({ k: q, l: "Paris", c: "CDI", d: "w" })}`); }
+    catch (e) { if (++echecs > 3) throw e; }
+    for (const b of html.split('data-id-storage-item-id="').slice(1)) {
+      const id = b.slice(0, b.indexOf('"'));
+      if (!/^\d+$/.test(id) || vus.has(id)) continue;
+      vus.add(id);
+      const title = contenu(b, '<p class="typo-l', "</p>") ?? "";
+      if (!isRelevantTitle(title)) continue;
+      const resume = strip(entre(entre(b, 'data-cy="offerTitle"', ">") ?? "", 'aria-label="', '"') ?? "");
+      const salaire = /salaire de ([^,]+)/.exec(resume)?.[1] ?? null;
+      const [smin, smax] = salaireFr(salaire);
+      push(webBase({
+        source: "HelloWork", source_id: id, url: `https://www.hellowork.com/fr-fr/emplois/${id}.html`, title,
+        company: contenu(b, '<p class="typo-s inline"', "</p>"), location: contenu(b, 'data-cy="localisationCard"', "</div>"),
+        contract: contractFrom(contenu(b, 'data-cy="contractCard"', "</div>")) ?? "CDI",
+        salary_min: smin, salary_max: smax, salary_currency: smin ? "EUR" : null, salary_text: salaire,
+        description: resume.replace(/^Voir offre de /, ""), posted_at: dateFr(contenu(b, 'text-grey-500 pl-1 pt-1"', "</div>")),
+      }));
+    }
+    await pause(700);
+  }
+}
+
+// Jobijoba : agrégateur français (Paris + 30 km, 7 derniers jours). Le lien passe par sa redirection vers l'annonce source.
+async function collectJobijoba(push: (o: Offer) => void, requetes: string[]) {
+  const vus = new Set<string>();
+  let echecs = 0;
+  for (const q of requetes) {
+    let html = "";
+    const p = new URLSearchParams({ what: q, where: "Paris", whereType: "city", perimeter: "30", period: "7_days" });
+    try { html = await getHTML(`https://www.jobijoba.com/fr/query/?${p}`); }
+    catch (e) { if (++echecs > 3) throw e; }
+    for (const b of html.split('<div class="offer" data-id="ad_').slice(1)) {
+      const id = b.slice(0, b.indexOf('"'));
+      if (!id || vus.has(id)) continue;
+      vus.add(id);
+      const title = contenu(b, 'class="offer-header-title"', "</h3>") ?? "";
+      if (!isRelevantTitle(title)) continue;
+      const f: Record<string, string> = {};
+      for (const s of b.split('<span class="feature">').slice(1)) {
+        // <span class="iconwrap"><span class="icon-…"></span></span><span>Valeur</span>
+        const icone = /icon-([a-z-]+)/.exec(s)?.[1] ?? "";
+        const i1 = s.indexOf("</span>"), i2 = s.indexOf("</span>", i1 + 7), i3 = s.indexOf("</span>", i2 + 7);
+        if (icone && i1 >= 0 && i2 >= 0 && i3 >= 0) f[icone] = strip(s.slice(i2 + 7, i3));
+      }
+      const desc = (contenu(b, 'class="description"', '<div class="sponsorised"') ?? contenu(b, 'class="description"', "</a>") ?? "")
+        .replace(/Sponsorisé|Lire la suite/g, "").replace(/\s*…\s*$/, " …").trim();
+      push(webBase({
+        source: "Jobijoba", source_id: id, url: decode(entre(b, 'href="', '"') ?? "") || null, title,
+        company: f["apartment"] || null, location: f["map-marker"] || null, contract: contractFrom(f["register"]),
+        description: desc || null, posted_at: dateFr(contenu(b, "publication_date\"", "</span>")),
+      }));
+    }
+    await pause(700);
+  }
+}
+
 type Site = { id: string; company: string; ats: string; config: any };
 
 async function collectCareerSite(site: Site, push: (o: Offer) => void) {
@@ -337,7 +560,7 @@ async function collectCareerSite(site: Site, push: (o: Offer) => void) {
 }
 
 // ---------------------------------------------------------------- collecte
-// scope : "apis" (France Travail, Adzuna, JSearch) | "sites" (sites carrières) | "all".
+// scope : "apis" (France Travail, Adzuna, JSearch, Business France) | "web" (job boards sans clé) | "sites" (sites carrières) | "all".
 // Séparé en deux appels planifiés pour rester sous la limite de durée d'une Edge Function.
 type Task = [string, (push: (o: Offer) => void) => Promise<void>, string | null];
 // Les sites carrières sont répartis en lots (un lot = une exécution séparée de la fonction),
@@ -356,7 +579,8 @@ async function lancerLots(db: SupabaseClient, uid: string | null = null) {
   return lots;
 }
 
-async function collect(db: SupabaseClient, scope: "apis" | "sites" | "all" = "all", part = 0, parts = 1) {
+type Scope = "apis" | "web" | "sites" | "all";
+async function collect(db: SupabaseClient, scope: Scope = "all", part = 0, parts = 1) {
   const { data: profiles } = await db.from("search_profiles").select("brief");
   const brief = profiles?.[0]?.brief ?? {};
   const pb = brief.piste_b ?? {};
@@ -365,7 +589,7 @@ async function collect(db: SupabaseClient, scope: "apis" | "sites" | "all" = "al
   const perDay = Number(brief.jsearch_requetes_par_jour ?? 6); // 6/jour ≈ 186/mois, sous le quota gratuit de 200
 
   const tasks: Task[] = [];
-  if (scope !== "sites") {
+  if (scope === "apis" || scope === "all") {
     const reqFR = listeBrief(brief.requetes_fr, 14);
     const reqIntl = listeBrief(brief.requetes_intl, 8);
     tasks.push(["France Travail", (p) => collectFranceTravail(p, reqFR), null]);
@@ -377,7 +601,17 @@ async function collect(db: SupabaseClient, scope: "apis" | "sites" | "all" = "al
     const { data: jsDone } = await db.from("collect_runs").select("id").eq("source", "JSearch").is("error", null).gte("started_at", today).limit(1);
     if (!jsDone?.length) tasks.push(["JSearch", (p) => collectJSearch(p, villes, perDay, reqIntl), null]);
   }
-  if (scope !== "apis") {
+  if (scope === "web" || scope === "all") {
+    const reqWeb = listeBrief(brief.requetes_fr, 9);
+    const q = reqWeb.length ? reqWeb : WEB_QUERIES;
+    const zonesB: string[] = (pb.pays_cibles ?? ["BE", "LU", "CH", "NL", "DE", "IE", "GB", "SE", "DK", "NO", "FI", "CA", "US", "AE", "SG", "HK", "TR"])
+      .map((c: string) => String(c).toUpperCase()).filter((c: string) => c !== "FR");
+    tasks.push(["Welcome to the Jungle", (p) => collectWTTJ(p, q, pb.actif === false ? [] : zonesB), null]);
+    tasks.push(["LinkedIn", (p) => collectLinkedIn(p, q), null]);
+    tasks.push(["HelloWork", (p) => collectHelloWork(p, q), null]);
+    tasks.push(["Jobijoba", (p) => collectJobijoba(p, q), null]);
+  }
+  if (scope === "sites" || scope === "all") {
     const { data: sites } = await db.from("career_sites").select("id, company, ats, config").eq("enabled", true).order("company");
     // Répartition en quinconce : les gros sites (Workday) se retrouvent dans des lots différents.
     const lot = ((sites ?? []) as Site[]).filter((_, i) => i % parts === part);
@@ -447,7 +681,8 @@ function evaluate(o: any, brief: any) {
   // piste
   let piste: string | null = null;
   if (isVIE) piste = "VIE";
-  else if (country === "FR" || (!country && IDF.test(loc))) piste = IDF.test(loc) || o.source === "France Travail" ? "A" : null;
+  // Sources déjà filtrées sur l'Île-de-France à la collecte : la banlieue absente de la liste IDF reste en piste A.
+  else if (country === "FR" || (!country && IDF.test(loc))) piste = IDF.test(loc) || SOURCES_IDF.has(o.source) ? "A" : null;
   else if (country) piste = "B";
   else piste = "B";
   if (!piste) return { excluded: "France hors Île-de-France" };
@@ -703,6 +938,17 @@ Deno.serve(async (req) => {
       const score = body.score_user ? await scoreUser(db, String(body.score_user), 0) : null;
       return json({ collect: out, ...(score ? { score } : {}) });
     }
+    if (body.action === "test_web") {
+      const fns: Record<string, (p: (o: Offer) => void, q: string[]) => Promise<void>> = {
+        wttj: (p, q) => collectWTTJ(p, q, ["BE", "CH"]), linkedin: collectLinkedIn, hellowork: collectHelloWork, jobijoba: collectJobijoba,
+      };
+      const fn = fns[String(body.source)];
+      if (!fn) return json({ error: "source inconnue" }, 400);
+      const found: Offer[] = [];
+      try { await fn((o) => found.push(o), body.q ?? ["data analyst"]); }
+      catch (e) { return json({ ok: false, count: found.length, error: String((e as Error).message ?? e).slice(0, 300) }); }
+      return json({ ok: true, count: found.length, sample: found.slice(0, body.n ?? 3).map((o) => ({ ...o, description: o.description?.slice(0, body.w ?? 200) })) });
+    }
     if (body.action === "score_all") {
       const { data: profs } = await db.from("search_profiles").select("user_id");
       const out: Record<string, unknown> = {};
@@ -723,7 +969,11 @@ Deno.serve(async (req) => {
       .in("source", ["France Travail", "Adzuna", "JSearch"]).order("started_at", { ascending: false }).limit(1);
     const age = last?.[0] ? Date.now() - new Date(last[0].started_at).getTime() : Infinity;
     const collected = age > 3 * 3600000 ? await collect(db, "apis") : null;
-    return json({ collect: collected, score: await scoreOuRetri(db, uid, 18) });
+    // Job boards (WTTJ, LinkedIn, HelloWork, Jobijoba) : collecte en arrière-plan, puis tri pour cet utilisateur.
+    const { data: lastWeb } = await db.from("collect_runs").select("started_at").in("source", WEB_SOURCES).order("started_at", { ascending: false }).limit(1);
+    const web = !lastWeb?.[0] || Date.now() - new Date(lastWeb[0].started_at).getTime() > 3 * 3600000;
+    if (web) await db.rpc("radar_call", { payload: { action: "collect", scope: "web", score_user: uid } });
+    return json({ collect: collected, web, score: await scoreOuRetri(db, uid, 18) });
   }
   if (body.action === "collect_sites") {
     // Scan en arrière-plan, lot par lot ; chaque lot trie ensuite les nouvelles offres pour cet utilisateur.
