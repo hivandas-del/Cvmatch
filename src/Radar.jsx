@@ -10,7 +10,8 @@ const SEUILS = [[0, "Score"], [50, "50+"], [75, "75+"], [85, "85+"]];
 const VUES = [["a_voir", "À regarder"], ["nouveau", "Nouvelles"], ["ajoute", "Ajoutées au suivi"], ["ignore", "Ignorées"]];
 const pisteLabel = { A: "CDI IDF", B: "International", VIE: "VIE" };
 const API_SOURCES = ["France Travail", "Adzuna", "JSearch"];
-const scoreOf = (r) => r.score ?? r.prescore ?? 0;
+// Note affichée : celle du CV adapté si « Adapter mon CV » a tourné, sinon la note IA du CV de base.
+const scoreOf = (r) => r.score_cv_adapte ?? r.score ?? r.prescore ?? 0;
 function ilYa(d) {
   if (!d) return "";
   const h = Math.max(0, (Date.now() - new Date(d)) / 3600000);
@@ -65,9 +66,11 @@ function OffreCard({ r, ouvert, onToggle, onAdapter, onSuivi, onPostule, onIgnor
     <article className="carte p-5 flex flex-col gap-4 min-w-0">
       <button type="button" onClick={onToggle} aria-expanded={ouvert} className="flex gap-3.5 text-left">
         <span className="w-14 h-14 shrink-0 rounded-2xl flex flex-col items-center justify-center leading-none" style={{ background: t.bg, color: t.fg }}
-          title={pre ? "Pré-score par mots-clés, en attente de la note IA" : "Note IA"}>
+          title={r.score_cv_adapte != null ? `Note IA avec ton CV adapté (CV de base : ${r.score ?? "—"})` : pre ? "Pré-score par mots-clés, en attente de la note IA" : "Note IA de ton CV de base"}>
           <span className="text-[22px] font-bold tabular-nums">{s}</span>
-          {pre && <span className="text-[9.5px] font-semibold uppercase tracking-wider mt-0.5 opacity-80">pré</span>}
+          {r.score_cv_adapte != null
+            ? <span className="text-[9.5px] font-semibold uppercase tracking-wider mt-0.5 opacity-80">{r.score != null && r.score_cv_adapte > r.score ? `+${r.score_cv_adapte - r.score} CV` : "CV adapté"}</span>
+            : pre && <span className="text-[9.5px] font-semibold uppercase tracking-wider mt-0.5 opacity-80">pré</span>}
         </span>
         <span className="min-w-0 flex-1">
           <span className="flex items-start gap-2">

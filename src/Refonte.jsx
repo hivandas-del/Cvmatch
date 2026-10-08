@@ -233,7 +233,7 @@ export default function Refonte({ adaptations, courante, raisons, onChoisir, onR
                     <span className="puce font-bold tabular-nums" style={{ background: tonScore(cv.score_avant).bg, color: tonScore(cv.score_avant).fg }}>{cv.score_avant}</span>
                     <span className="text-stone-400" aria-hidden="true">→</span>
                     <span className="puce font-bold tabular-nums text-[14px]" style={{ background: tonScore(cv.score_apres).bg, color: tonScore(cv.score_apres).fg }}>{cv.score_apres}</span>
-                    <span className="text-sm text-stone-600">compatibilité avec l'offre</span>
+                    <span className="text-sm text-stone-600">note IA · ton CV de base → CV adapté</span>
                   </div>
                 )}
                 <div className="flex gap-2 sm:ml-auto">

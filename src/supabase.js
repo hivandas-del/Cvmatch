@@ -42,7 +42,7 @@ export async function supprimerCandidature(id) {
 export async function chargerOffres() {
   const { data, error } = await supabase
     .from("offer_matches")
-    .select("offer_id, piste, prescore, score, verdict, reasons, scored_by, status, created_at, job_offers(*)")
+    .select("offer_id, piste, prescore, score, score_cv_adapte, verdict, reasons, scored_by, status, created_at, job_offers(*)")
     .neq("status", "exclu")
     .order("created_at", { ascending: false })
     .limit(600);
