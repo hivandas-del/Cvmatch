@@ -339,11 +339,11 @@ CV:\n${cv}\nANNONCE:\n${annonce}`);
     }
     aller("analyse");
   }
-  const suivreDepuisRadar = (r) => {
+  const suivreDepuisRadar = (r, statut = "À postuler") => {
     const o = r.job_offers ?? {};
     return inserer({
       entreprise: o.company || "—", poste: o.title || "—", contrat: contratDe(o.contract),
-      canal: "—", contact: "", statut: "À postuler", score: r.score ?? null, source: "radar",
+      canal: "—", contact: "", statut, score: r.score ?? null, source: "radar",
     });
   };
   const ajouterDepuisAnalyse = () => inserer({
@@ -429,13 +429,13 @@ TEXTE:\n${ajoutTexte}`);
         {tab === "analyse" && (
           <div className="flex flex-col gap-5">
             {titrePage("Analyse", "Compare ton CV à une offre et vois ce qui colle ou ce qui manque.")}
-            <div className="grid sm:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div className="flex flex-col gap-1.5"><label htmlFor="ent" className="etiquette">Entreprise</label><input id="ent" value={entreprise} onChange={(e) => setEntreprise(e.target.value)} className="champ" /></div>
               <div className="flex flex-col gap-1.5"><label htmlFor="pos" className="etiquette">Poste visé</label><input id="pos" value={poste} onChange={(e) => setPoste(e.target.value)} className="champ" /></div>
               <div className="flex flex-col gap-1.5"><label htmlFor="ctr" className="etiquette">Contrat</label>
                 <select id="ctr" value={contrat} onChange={(e) => setContrat(e.target.value)} className="champ cursor-pointer">{CONTRATS.map((c) => <option key={c}>{c}</option>)}</select></div>
             </div>
-            <div className="grid md:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div className="flex flex-col gap-1.5">
                 <span className="etiquette">Ton CV</span>
                 {!cvManuel ? (
@@ -465,7 +465,7 @@ TEXTE:\n${ajoutTexte}`);
             {analyse && (
               <div className="carte p-5 sm:p-7 flex flex-col gap-6">
                 <div className="flex flex-col sm:flex-row items-center gap-5"><Gauge score={analyse.score} /><p className="m-0 text-[15px] leading-relaxed">{analyse.resume}</p></div>
-                <div className="grid sm:grid-cols-2 gap-5">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
                   <div><p className="m-0 mb-2.5 text-sm font-semibold">Points forts</p><div className="flex flex-wrap gap-1.5">{analyse.presentes.map((t, i) => <span key={i} className="puce bg-green-50 text-green-800">{t}</span>)}</div></div>
                   <div><p className="m-0 mb-2.5 text-sm font-semibold">Manquant</p><div className="flex flex-wrap gap-1.5">{analyse.manquantes.map((t, i) => <span key={i} className="puce bg-red-50 text-red-800">{t}</span>)}</div></div>
                 </div>

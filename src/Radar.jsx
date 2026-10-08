@@ -48,8 +48,13 @@ export function parseSiteUrl(raw) {
 }
 
 // ---------- carte offre ----------
-function OffreCard({ r, ouvert, onToggle, onAdapter, onSuivi, onIgnorer, onRestaurer, onLien }) {
+// Lien de candidature : l'annonce d'origine, sinon une recherche Google du poste.
+const lienPostuler = (o) =>
+  o.url || `https://www.google.com/search?q=${encodeURIComponent([o.title, o.company, "candidature"].filter(Boolean).join(" "))}`;
+
+function OffreCard({ r, ouvert, onToggle, onAdapter, onSuivi, onPostule, onIgnorer, onRestaurer, onLien }) {
   const o = r.job_offers ?? {};
+  const [vientDePostuler, setVientDePostuler] = useState(false);
   const pre = r.scored_by !== "ia";
   const s = scoreOf(r);
   const t = tonScore(s);
@@ -57,7 +62,7 @@ function OffreCard({ r, ouvert, onToggle, onAdapter, onSuivi, onIgnorer, onResta
   const raisons = Array.isArray(r.reasons) ? r.reasons : [];
   const resume = r.verdict || raisons[0];
   return (
-    <article className="carte p-5 flex flex-col gap-4">
+    <article className="carte p-5 flex flex-col gap-4 min-w-0">
       <button type="button" onClick={onToggle} aria-expanded={ouvert} className="flex gap-3.5 text-left">
         <span className="w-14 h-14 shrink-0 rounded-2xl flex flex-col items-center justify-center leading-none" style={{ background: t.bg, color: t.fg }}
           title={pre ? "Pré-score par mots-clés, en attente de la note IA" : "Note IA"}>
@@ -66,7 +71,7 @@ function OffreCard({ r, ouvert, onToggle, onAdapter, onSuivi, onIgnorer, onResta
         </span>
         <span className="min-w-0 flex-1">
           <span className="flex items-start gap-2">
-            <span className="text-[16.5px] font-semibold leading-snug tracking-[-0.01em]">{o.title}</span>
+            <span className="min-w-0 text-[16.5px] font-semibold leading-snug tracking-[-0.01em] break-words">{o.title}</span>
             {r.status === "nouveau" && <span className="mt-2 w-2 h-2 rounded-full bg-ink shrink-0" title="Nouvelle" />}
           </span>
           <span className="block text-sm text-stone-600 mt-0.5 truncate">{o.company || "Entreprise non précisée"}{o.location && ` · ${o.location}`}</span>
@@ -91,7 +96,7 @@ function OffreCard({ r, ouvert, onToggle, onAdapter, onSuivi, onIgnorer, onResta
             </ul>
           )}
           {o.description && (
-            <p className="m-0 text-[13px] leading-relaxed text-stone-600 bg-stone-100 rounded-xl p-3.5 max-h-60 overflow-auto whitespace-pre-line">
+            <p className="m-0 text-[13px] leading-relaxed text-stone-600 bg-stone-100 rounded-xl p-3.5 max-h-60 overflow-auto whitespace-pre-line break-words">
               {o.description.slice(0, 2500)}{o.description.length > 2500 ? "…" : ""}
             </p>
           )}
@@ -105,12 +110,23 @@ function OffreCard({ r, ouvert, onToggle, onAdapter, onSuivi, onIgnorer, onResta
             ? <button onClick={onRestaurer} className="ml-auto shrink-0 hover:text-ink">Restaurer</button>
             : <button onClick={onIgnorer} className="ml-auto shrink-0 hover:text-red-700">Pas pour moi</button>}
         </div>
-        <div className="flex gap-2">
-          <button onClick={onAdapter} className="btn-noir btn-sm flex-1">Adapter mon CV</button>
+        <a href={lienPostuler(o)} target="_blank" rel="noreferrer" onClick={(e) => { onLien(e); setVientDePostuler(true); }}
+          title={o.url ? "Ouvrir l'annonce pour postuler" : "Lien direct indisponible : recherche de l'annonce"}
+          className="btn-noir w-full">
+          Postuler{!o.url && <span className="font-normal text-white/60"> · recherche</span>} <span aria-hidden="true">↗</span>
+        </a>
+        {vientDePostuler && r.status !== "ajoute" && (
+          <div role="status" className="flex items-center gap-3 rounded-xl bg-stone-100 p-3 text-[13.5px]">
+            <span className="flex-1 min-w-0">C'est envoyé&nbsp;?</span>
+            <button onClick={async () => { await onPostule(); setVientDePostuler(false); }} className="btn-noir btn-sm shrink-0">J'ai postulé ✓</button>
+            <button onClick={() => setVientDePostuler(false)} aria-label="Pas encore" className="text-stone-500 hover:text-ink shrink-0 px-1">Pas encore</button>
+          </div>
+        )}
+        <div className="grid grid-cols-2 gap-2">
+          <button onClick={onAdapter} className="btn-gris btn-sm">Adapter mon CV</button>
           {r.status !== "ajoute"
             ? <button onClick={onSuivi} className="btn-gris btn-sm">Suivre</button>
-            : <span className="btn-sm inline-flex items-center rounded-xl font-semibold bg-green-50 text-green-800">Suivi ✓</span>}
-          {o.url && <a href={o.url} target="_blank" rel="noreferrer" onClick={onLien} aria-label="Voir l'offre" title="Voir l'offre" className="btn-gris btn-sm px-3">↗</a>}
+            : <span className="btn-sm inline-flex items-center justify-center rounded-xl font-semibold bg-green-50 text-green-800">Suivi ✓</span>}
         </div>
       </div>
     </article>
@@ -154,8 +170,8 @@ function Sources({ journal, sites, setSites, setMsg }) {
   };
 
   return (
-    <div className="grid lg:grid-cols-5 gap-3">
-      <div className="lg:col-span-2 carte p-5">
+    <div className="grid grid-cols-1 lg:grid-cols-5 gap-3">
+      <div className="lg:col-span-2 carte p-5 min-w-0">
         <p className="m-0 text-[15px] font-semibold">Agrégateurs</p>
         <p className="mt-1 mb-4 text-[13px] text-stone-600">France Travail, Adzuna (19 pays) et Google for Jobs via JSearch (LinkedIn, Indeed, Glassdoor…).</p>
         <ul className="m-0 p-0 list-none flex flex-col gap-2.5">
@@ -175,7 +191,7 @@ function Sources({ journal, sites, setSites, setMsg }) {
         </p>
       </div>
 
-      <div className="lg:col-span-3 carte p-5">
+      <div className="lg:col-span-3 carte p-5 min-w-0">
         <p className="m-0 text-[15px] font-semibold">Sites carrières surveillés <span className="text-stone-500 font-normal">· {sites.filter((s) => s.enabled).length}</span></p>
         <p className="mt-1 mb-4 text-[13px] text-stone-600">Colle l'URL de la page offres d'une entreprise (Workday, Greenhouse, Lever, Ashby, SmartRecruiters).</p>
         <div className="flex flex-col gap-2">
@@ -332,7 +348,7 @@ export default function Radar({ onAdapter, onSuivi }) {
 
       {/* Liste */}
       {charge ? (
-        <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-3">{[0, 1, 2].map((i) => <div key={i} className="h-60 carte animate-pulse" />)}</div>
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">{[0, 1, 2].map((i) => <div key={i} className="h-60 carte animate-pulse" />)}</div>
       ) : filtrees.length === 0 ? (
         <div className="carte p-10 text-center">
           <p className="m-0 text-[15px] font-semibold">{rows.length ? "Aucune offre avec ces filtres." : "Pas encore d'offres."}</p>
@@ -340,13 +356,14 @@ export default function Radar({ onAdapter, onSuivi }) {
         </div>
       ) : (
         <>
-          <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
             {filtrees.slice(0, nb).map((r) => (
               <OffreCard key={r.offer_id} r={r} ouvert={ouvert === r.offer_id}
                 onToggle={() => { setOuvert(ouvert === r.offer_id ? null : r.offer_id); marquerVu(r); }}
                 onLien={(e) => { e.stopPropagation(); marquerVu(r); }}
                 onAdapter={() => { marquerVu(r); onAdapter(r); }}
                 onSuivi={async () => { try { await onSuivi(r); await statut(r, "ajoute"); setMsg("Ajoutée au suivi."); } catch { setMsg("Ajout au suivi impossible."); } }}
+                onPostule={async () => { try { await onSuivi(r, "Envoyée"); await statut(r, "ajoute"); setMsg("Candidature ajoutée au suivi (Envoyée)."); } catch { setMsg("Ajout au suivi impossible."); } }}
                 onIgnorer={() => statut(r, "ignore")}
                 onRestaurer={() => statut(r, "vu")} />
             ))}
