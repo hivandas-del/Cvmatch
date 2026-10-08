@@ -27,3 +27,25 @@ create policy "adaptations : modification" on public.cv_adaptations for update t
   using ((select auth.uid()) = user_id) with check ((select auth.uid()) = user_id);
 create policy "adaptations : suppression" on public.cv_adaptations for delete to authenticated
   using ((select auth.uid()) = user_id);
+
+-- Écriture du résultat par la tâche Claude, en plusieurs morceaux, via des SELECT de fonction
+-- (évite les UPDATE géants qui bloquent les confirmations côté connecteur).
+create or replace function public.cvmatch_cv_partie(p_id uuid, p_partie jsonb, p_fini boolean default false)
+returns text language sql security definer set search_path = '' as $$
+  update public.cv_adaptations
+     set resultat = coalesce(resultat, '{}'::jsonb) || p_partie,
+         statut = case when p_fini then 'pret' else statut end,
+         erreur = null, updated_at = now()
+   where id = p_id
+  returning statut;
+$$;
+create or replace function public.cvmatch_marquer(p_ids uuid[], p_statut text, p_erreur text default null)
+returns integer language sql security definer set search_path = '' as $$
+  with m as (
+    update public.cv_adaptations set statut = p_statut, erreur = p_erreur, updated_at = now()
+     where id = any(p_ids) and p_statut in ('en_attente', 'en_cours', 'pret', 'erreur')
+    returning 1)
+  select count(*)::int from m;
+$$;
+revoke execute on function public.cvmatch_cv_partie(uuid, jsonb, boolean) from public, anon, authenticated;
+revoke execute on function public.cvmatch_marquer(uuid[], text, text) from public, anon, authenticated;
