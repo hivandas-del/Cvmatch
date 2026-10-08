@@ -8,6 +8,22 @@
   :focus-visible { @apply outline-none ring-2 ring-ink ring-offset-2 ring-offset-stone-100; }
 }
 
+/* Impression du CV adapté : seule la feuille sort, au format A4. */
+@media print {
+  @page { size: A4; margin: 11mm 13mm; }
+  body.impression-cv { background: #fff !important; padding: 0 !important; }
+  body.impression-cv header,
+  body.impression-cv nav,
+  body.impression-cv .no-print,
+  body.impression-cv [role="alert"] { display: none !important; }
+  body.impression-cv main { padding: 0 !important; max-width: none !important; }
+  body.impression-cv #root > div { padding: 0 !important; background: #fff !important; min-height: 0 !important; }
+  body.impression-cv #cv-feuille { padding: 0 !important; border-radius: 0 !important; box-shadow: none !important; font-size: 10.5pt; gap: 12pt; }
+  body.impression-cv .cv-bloc { break-inside: avoid; }
+  body.impression-cv .grid { display: block !important; }
+  body.impression-cv .cv-section.grid { display: grid !important; grid-template-columns: 1fr 1fr; }
+}
+
 @layer components {
   /* Champs */
   .champ { @apply h-[52px] w-full rounded-xl border border-stone-300 bg-white px-4 text-base text-ink placeholder:text-stone-400 outline-none transition focus:border-ink; }

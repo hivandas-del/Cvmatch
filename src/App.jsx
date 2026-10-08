@@ -2,9 +2,11 @@ import { useState, useEffect, useRef } from "react";
 import {
   supabase, callClaude, inscription, connexion, deconnexion, motDePasseOublie, nouveauMotDePasse,
   chargerCandidatures, ajouterCandidature, majCandidature, supprimerCandidature, chargerProfil,
+  creerAdaptation, chargerAdaptations, chargerAdaptation, declencherAdaptation, relancerAdaptation, supprimerAdaptation,
 } from "./supabase";
 import { extraireTexte } from "./extract";
 import Radar from "./Radar";
+import Refonte from "./Refonte";
 import { tonScore, initiales } from "./ui";
 
 const STATUTS = ["À postuler", "Envoyée", "Relancée", "Entretien", "Refusée", "Offre"];
@@ -256,7 +258,10 @@ function Dashboard({ userId, email }) {
   const [contrat, setContrat] = useState("CDI");
 
   const [analyse, setAnalyse] = useState(null);
-  const [refonte, setRefonte] = useState(null);
+  const [adaptations, setAdaptations] = useState([]);
+  const [courante, setCourante] = useState(null);
+  const [raisons, setRaisons] = useState({});
+  const [adaptChargement, setAdaptChargement] = useState(true);
   const [message, setMessage] = useState(null);
   const [loading, setLoading] = useState("");
   const [err, setErr] = useState("");
@@ -268,6 +273,20 @@ function Dashboard({ userId, email }) {
   const [ajoutTexte, setAjoutTexte] = useState("");
 
   useEffect(() => { chargerCandidatures().then(setCandidatures).catch(() => setErr("Chargement impossible.")); }, []);
+  useEffect(() => {
+    chargerAdaptations().then(setAdaptations).catch(() => {}).finally(() => setAdaptChargement(false));
+  }, []);
+
+  // Tant qu'une adaptation tourne, on relit sa ligne toutes les 4 s (la tâche Claude écrit le résultat en base).
+  const enCours = adaptations.filter((a) => a.statut === "en_attente" || a.statut === "en_cours").map((a) => a.id).join(",");
+  useEffect(() => {
+    if (!enCours) return;
+    const t = setInterval(async () => {
+      const maj = await Promise.all(enCours.split(",").map((id) => chargerAdaptation(id).catch(() => null)));
+      setAdaptations((l) => l.map((a) => maj.find((m) => m?.id === a.id) || a));
+    }, 4000);
+    return () => clearInterval(t);
+  }, [enCours]);
 
   const aller = (t) => { setTab(t); setMenu(false); window.scrollTo({ top: 0 }); };
   const copier = (txt, id) => { navigator.clipboard.writeText(txt); setCopie(id); setTimeout(() => setCopie(""), 1500); };
@@ -300,15 +319,40 @@ CV:\n${cv}\nANNONCE:\n${annonce}`);
     setAnalyse(r);
   });
 
-  const lancerRefonte = () => run("refonte", async () => {
-    setRefonte(null); aller("refonte");
-    const r = await callClaude(
-      "Tu es un coach CV. Réponds UNIQUEMENT avec un objet JSON valide, sans backticks.",
-      `Réécris ce CV pour l'annonce, sans inventer d'expérience. JSON exact :
-{"titre":"<titre adapté>","accroche":"<2-3 lignes>","bullets":["<puces résultats + mots-clés>"],"a_ajouter":["<à mettre en avant>"]}
-CV:\n${cv}\nANNONCE:\n${annonce}`);
-    setRefonte(r);
-  });
+  // ---------- Adapter mon CV : file d'attente + tâche Claude (abonnement) ----------
+  async function declencher(id) {
+    const r = await declencherAdaptation(id);
+    setRaisons((m) => ({ ...m, [id]: r.declenche ? "ok" : r.raison }));
+    if (r.session_url) setAdaptations((l) => l.map((a) => (a.id === id ? { ...a, session_url: r.session_url } : a)));
+  }
+  async function adapter({ offer_id = null, entreprise: ent, poste: pos, annonce: ann, cvTexte }) {
+    setErr("");
+    let texteCV = cvTexte || cv;
+    if (!texteCV) {
+      const p = await chargerProfil().catch(() => null);
+      texteCV = p?.cv_text || "";
+      if (texteCV) { setCv(texteCV); setCvNom("CV de ton profil"); }
+    }
+    if (!texteCV) { setErr("Ajoute d'abord ton CV dans l'onglet Analyse."); aller("analyse"); return; }
+    if (!ann?.trim()) { setErr("L'annonce est vide : colle-la dans l'onglet Analyse."); aller("analyse"); return; }
+    try {
+      const a = await creerAdaptation({ offer_id, entreprise: ent || null, poste: pos || null, annonce: ann, cv_text: texteCV });
+      setAdaptations((l) => [a, ...l]);
+      setCourante(a.id);
+      aller("refonte");
+      await declencher(a.id);
+    } catch { setErr("Impossible d'enregistrer la demande d'adaptation."); }
+  }
+  const lancerRefonte = () => adapter({ entreprise, poste, annonce });
+  async function relancer(id) {
+    setAdaptations((l) => l.map((a) => (a.id === id ? { ...a, statut: "en_attente", erreur: null, created_at: new Date().toISOString() } : a)));
+    try { await relancerAdaptation(id); await declencher(id); } catch { setErr("Relance impossible."); }
+  }
+  async function supprimerAdapt(id) {
+    setAdaptations((l) => l.filter((a) => a.id !== id));
+    if (courante === id) setCourante(null);
+    try { await supprimerAdaptation(id); } catch { setErr("Suppression impossible."); }
+  }
 
   const lancerMessage = () => run("message", async () => {
     setMessage(null); aller("message");
@@ -332,12 +376,10 @@ CV:\n${cv}\nANNONCE:\n${annonce}`);
     const o = r.job_offers ?? {};
     setEntreprise(o.company || ""); setPoste(o.title || ""); setContrat(contratDe(o.contract));
     setAnnonce([o.title, [o.company, o.location].filter(Boolean).join(" — "), "", o.description || ""].join("\n"));
-    setAnalyse(null); setRefonte(null); setMessage(null);
-    if (!cv) {
-      const p = await chargerProfil().catch(() => null);
-      if (p?.cv_text) { setCv(p.cv_text); setCvNom("CV de ton profil"); }
-    }
-    aller("analyse");
+    setAnalyse(null); setMessage(null);
+    const ann = [o.title, [o.company, o.location].filter(Boolean).join(" — "), "", o.description || ""].join("\n");
+    // Le CV du profil (celui du radar) sert de base, sauf si un autre CV est déjà chargé.
+    await adapter({ offer_id: r.offer_id, entreprise: o.company, poste: o.title, annonce: ann });
   }
   const suivreDepuisRadar = (r, statut = "À postuler") => {
     const o = r.job_offers ?? {};
@@ -397,7 +439,7 @@ TEXTE:\n${ajoutTexte}`);
   return (
     <div className="min-h-screen bg-stone-100 text-ink pb-24 md:pb-10">
       {/* En-tête */}
-      <header className="sticky top-0 z-30 bg-stone-100/90 backdrop-blur">
+      <header className="no-print sticky top-0 z-30 bg-stone-100/90 backdrop-blur">
         <div className="max-w-6xl mx-auto px-4 sm:px-8 h-16 md:h-20 flex items-center gap-4">
           <button onClick={() => aller("radar")} className="text-[13px] font-bold tracking-[0.08em] uppercase md:w-48 text-left">CVMatch</button>
           <nav aria-label="Principal" className="hidden md:flex mx-auto gap-1 p-1 rounded-2xl bg-white">
@@ -459,9 +501,12 @@ TEXTE:\n${ajoutTexte}`);
                 <textarea id="ann" value={annonce} onChange={(e) => setAnnonce(e.target.value)} rows={9} placeholder="Colle l'offre ici…" className="zone" />
               </div>
             </div>
-            <button onClick={lancerAnalyse} disabled={loading || !cv || !annonce} className="btn-noir self-start">
-              {loading === "analyse" ? "Analyse en cours…" : "Analyser la compatibilité"}
-            </button>
+            <div className="flex flex-wrap gap-2">
+              <button onClick={lancerRefonte} disabled={!annonce} className="btn-noir">Adapter mon CV</button>
+              <button onClick={lancerAnalyse} disabled={loading || !cv || !annonce} className="btn-gris">
+                {loading === "analyse" ? "Analyse en cours…" : "Analyser la compatibilité"}
+              </button>
+            </div>
             {analyse && (
               <div className="carte p-5 sm:p-7 flex flex-col gap-6">
                 <div className="flex flex-col sm:flex-row items-center gap-5"><Gauge score={analyse.score} /><p className="m-0 text-[15px] leading-relaxed">{analyse.resume}</p></div>
@@ -481,21 +526,8 @@ TEXTE:\n${ajoutTexte}`);
         )}
 
         {tab === "refonte" && (
-          <div>
-            {titrePage("Refonte CV", "Ton CV réécrit pour l'offre analysée, sans rien inventer.")}
-            {!refonte && loading !== "refonte" && <Vide>Lance une analyse puis « Réécrire mon CV ».</Vide>}
-            {loading === "refonte" && <Vide>Réécriture en cours…</Vide>}
-            {refonte && (
-              <div className="carte p-5 sm:p-7 flex flex-col gap-6">
-                <div><p className="m-0 mb-1 text-xs font-semibold tracking-[0.06em] uppercase text-stone-600">Titre</p><p className="m-0 text-xl font-semibold tracking-tight">{refonte.titre}</p></div>
-                <div><p className="m-0 mb-1 text-xs font-semibold tracking-[0.06em] uppercase text-stone-600">Accroche</p><p className="m-0 text-[15px] leading-relaxed">{refonte.accroche}</p></div>
-                <div><p className="m-0 mb-2 text-xs font-semibold tracking-[0.06em] uppercase text-stone-600">Expériences réécrites</p>
-                  <ul className="m-0 p-0 list-none flex flex-col gap-2">{refonte.bullets.map((b, i) => <li key={i} className="text-[15px] flex gap-2.5 p-3.5 rounded-xl bg-stone-100"><span>•</span><span>{b}</span></li>)}</ul></div>
-                <div><p className="m-0 mb-2 text-xs font-semibold tracking-[0.06em] uppercase text-stone-600">À mettre en avant</p>
-                  <div className="flex flex-wrap gap-1.5">{refonte.a_ajouter.map((t, i) => <span key={i} className="puce bg-stone-100">{t}</span>)}</div></div>
-              </div>
-            )}
-          </div>
+          <Refonte adaptations={adaptations} courante={courante} raisons={raisons} chargement={adaptChargement}
+            onChoisir={setCourante} onRelancer={relancer} onSupprimer={supprimerAdapt} onAller={aller} />
         )}
 
         {tab === "message" && (
