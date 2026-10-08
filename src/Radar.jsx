@@ -10,7 +10,8 @@ const SEUILS = [[0, "Tous"], [50, "50+"], [60, "60+"], [70, "70+"], [75, "75+"],
 const PERIODES = [[0, "Toutes"], [1, "24 h"], [3, "3 jours"], [7, "7 jours"], [14, "14 jours"], [30, "30 jours"]];
 const TRIS = [["score", "Meilleur score"], ["recent", "Plus récentes"], ["salaire", "Meilleur salaire"]];
 const CONTRATS = ["CDI", "VIE", "CDD", "—"];
-const SOURCES = [["sites", "Sites carrières"], ["Business France VIE", "Business France (VIE)"], ["Adzuna", "Adzuna"], ["JSearch", "JSearch"], ["France Travail", "France Travail"]];
+const SOURCES = [["sites", "Sites carrières"], ["Business France VIE", "Business France (VIE)"], ["Adzuna", "Adzuna"], ["JSearch", "JSearch"], ["France Travail", "France Travail"],
+  ["Welcome to the Jungle", "Welcome to the Jungle"], ["LinkedIn", "LinkedIn"], ["HelloWork", "HelloWork"], ["Jobijoba", "Jobijoba"]];
 const NOTES = [["toutes", "Toutes"], ["ia", "Notées par l'IA"], ["pre", "Pré-score seulement"]];
 const FILTRES_VIDES = { seuil: 0, periode: 0, contrats: [], sources: [], pays: [], secteurs: [], note: "toutes", salaire: false, remote: false };
 const famille = (src = "") => (src.startsWith("Carrières") ? "sites" : src.startsWith("JSearch") ? "JSearch" : src);
@@ -29,7 +30,8 @@ const nbActifs = (f) =>
   + (f.note !== "toutes" ? 1 : 0) + (f.salaire ? 1 : 0) + (f.remote ? 1 : 0);
 const VUES = [["a_voir", "À regarder"], ["nouveau", "Nouvelles"], ["ajoute", "Ajoutées au suivi"], ["ignore", "Ignorées"]];
 const pisteLabel = { A: "CDI IDF", B: "International", VIE: "VIE" };
-const API_SOURCES = ["France Travail", "Adzuna", "JSearch", "Business France VIE"];
+const API_SOURCES = ["France Travail", "Adzuna", "JSearch", "Business France VIE", "Welcome to the Jungle", "LinkedIn", "HelloWork", "Jobijoba"];
+const NOM_COURT = { "Business France VIE": "Business France", "Welcome to the Jungle": "WTTJ" };
 // Note affichée : celle du CV adapté si « Adapter mon CV » a tourné, sinon la note IA du CV de base.
 const scoreOf = (r) => r.score_cv_adapte ?? r.score ?? r.prescore ?? 0;
 function ilYa(d) {
@@ -259,21 +261,24 @@ function Sources({ journal, sites, setSites, setMsg }) {
     <div className="grid grid-cols-1 lg:grid-cols-5 gap-3">
       <div className="lg:col-span-2 carte p-5 min-w-0">
         <p className="m-0 text-[15px] font-semibold">Agrégateurs</p>
-        <p className="mt-1 mb-4 text-[13px] text-stone-600">France Travail, Adzuna, Google for Jobs via JSearch (LinkedIn, Indeed, Glassdoor…) et les VIE de Business France.</p>
+        <p className="mt-1 mb-4 text-[13px] text-stone-600">France Travail, Adzuna, Google for Jobs via JSearch, les VIE de Business France, et les job boards Welcome to the Jungle, LinkedIn, HelloWork et Jobijoba (toutes les 4 h).</p>
         <ul className="m-0 p-0 list-none flex flex-col gap-2.5">
           {API_SOURCES.map((s) => {
             const [dot, txt] = etat(dernier[s]);
             return (
               <li key={s} className="flex items-center gap-2.5 text-sm">
                 <span className={`w-2 h-2 rounded-full shrink-0 ${dot}`} />
-                <span className="font-semibold w-28 shrink-0 truncate" title={s}>{s === "Business France VIE" ? "Business France" : s}</span>
+                <span className="font-semibold w-28 shrink-0 truncate" title={s}>{NOM_COURT[s] ?? s}</span>
                 <span className="text-[13px] text-stone-600 truncate">{txt}</span>
               </li>
             );
           })}
         </ul>
         <p className="mt-4 mb-0 text-xs text-stone-500 leading-relaxed">
-          Les clés se mettent dans Supabase → Edge Functions → Secrets : <code>FT_CLIENT_ID</code>, <code>FT_CLIENT_SECRET</code>, <code>ADZUNA_APP_ID</code>, <code>ADZUNA_APP_KEY</code>, <code>JSEARCH_API_KEY</code>.
+          Les clés se mettent dans Supabase → Edge Functions → Secrets : <code>FT_CLIENT_ID</code>, <code>FT_CLIENT_SECRET</code>, <code>ADZUNA_APP_ID</code>, <code>ADZUNA_APP_KEY</code>, <code>JSEARCH_API_KEY</code>. Les job boards n'ont pas besoin de clé.
+        </p>
+        <p className="mt-2 mb-0 text-xs text-stone-500 leading-relaxed">
+          ZipRecruiter, Indeed, Glassdoor, Jooble, Cadremploi et l'APEC bloquent les robots : leurs annonces n'arrivent que via JSearch (Google for Jobs).
         </p>
       </div>
 
@@ -361,6 +366,7 @@ export default function Radar({ onAdapter, onSuivi }) {
       parts.push(`${sc.added ?? 0} nouvelles pour toi`);
       if (sc.aiScored) parts.push(`${sc.aiScored} notées par l'IA`);
       if (sc.aiError) parts.push("note IA indisponible pour l'instant (tri par mots-clés en attendant)");
+      if (r.web) { parts.push("job boards en cours de scan (~1 min)"); setTimeout(() => recharger().catch(() => {}), 90000); }
       setMsg(parts.join(" · "));
       await recharger();
     } catch (e) { setMsg(e.message); }
