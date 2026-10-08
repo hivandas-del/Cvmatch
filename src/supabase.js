@@ -181,6 +181,46 @@ export async function declencherAdaptation(id) {
   return out;
 }
 
+// ---------- Analyser la compatibilité (même circuit que « Adapter mon CV » : abonnement Claude, pas de clé API) ----------
+const COLS_ANALYSE = "id, offer_id, entreprise, poste, statut, resultat, erreur, session_url, created_at, updated_at";
+export async function creerAnalyse(d) {
+  const { data, error } = await supabase.from("cv_analyses")
+    .insert({ ...d, annonce: (d.annonce || "").slice(0, 9000) }).select(COLS_ANALYSE).single();
+  if (error) throw error;
+  return data;
+}
+export async function chargerAnalyses() {
+  const { data, error } = await supabase.from("cv_analyses").select(COLS_ANALYSE)
+    .order("created_at", { ascending: false }).limit(12);
+  if (error) throw error;
+  return data;
+}
+export async function chargerAnalyse(id) {
+  const { data, error } = await supabase.from("cv_analyses").select(COLS_ANALYSE).eq("id", id).single();
+  if (error) throw error;
+  return data;
+}
+export async function relancerAnalyse(id) {
+  const { error } = await supabase.from("cv_analyses")
+    .update({ statut: "en_attente", erreur: null, updated_at: new Date().toISOString() }).eq("id", id);
+  if (error) throw error;
+}
+export async function supprimerAnalyse(id) {
+  const { error } = await supabase.from("cv_analyses").delete().eq("id", id);
+  if (error) throw error;
+}
+export async function declencherAnalyse(id) {
+  const { data: { session } } = await supabase.auth.getSession();
+  const res = await fetch(`${URL}/functions/v1/adapter-cv`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` },
+    body: JSON.stringify({ analyse: id }),
+  });
+  const out = await res.json().catch(() => ({}));
+  if (!res.ok) return { declenche: false, raison: out.error || `http_${res.status}` };
+  return out;
+}
+
 // ---------- IA (via Edge Function, clé secrète côté serveur) ----------
 export async function callClaude(system, user) {
   const { data: { session } } = await supabase.auth.getSession();
