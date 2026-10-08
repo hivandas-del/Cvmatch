@@ -639,7 +639,7 @@ TEXTE:\n${ajoutTexte}`);
       </main>
 
       {/* Barre d'onglets mobile */}
-      <nav aria-label="Principal" className="md:hidden fixed bottom-0 inset-x-0 z-30 bg-white border-t border-stone-200 grid grid-cols-5" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
+      <nav aria-label="Principal" className="no-print md:hidden fixed bottom-0 inset-x-0 z-30 bg-white border-t border-stone-200 grid grid-cols-5" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
         {tabs.map(({ id, court, Icon }) => (
           <button key={id} onClick={() => aller(id)} aria-current={tab === id ? "page" : undefined}
             className={`h-16 flex flex-col items-center justify-center gap-1 text-[11.5px] ${tab === id ? "text-ink font-bold" : "text-stone-500 font-medium"}`}>

@@ -120,8 +120,8 @@ function Attente({ a, raison, onRelancer }) {
   const nonDeclenche = raison && raison !== "ok";
   return (
     <div className="carte p-6 sm:p-9 flex flex-col gap-6">
-      <div className="flex items-center gap-4">
-        <span className="relative flex w-3 h-3 shrink-0">
+      <div className="flex items-start gap-4">
+        <span className="relative flex w-3 h-3 shrink-0 mt-2">
           <span className="absolute inline-flex h-full w-full rounded-full bg-ink opacity-30 animate-ping" />
           <span className="relative inline-flex w-3 h-3 rounded-full bg-ink" />
         </span>
