@@ -313,6 +313,16 @@ function Dashboard({ userId, email }) {
   }, [enCours]);
 
   const aller = (t) => { setTab(t); setMenu(false); window.scrollTo({ top: 0 }); };
+  // Menu compte : se ferme au clic à côté ou avec Échap.
+  const menuRef = useRef(null);
+  useEffect(() => {
+    if (!menu) return;
+    const clic = (e) => { if (!menuRef.current?.contains(e.target)) setMenu(false); };
+    const esc = (e) => { if (e.key === "Escape") setMenu(false); };
+    document.addEventListener("pointerdown", clic);
+    document.addEventListener("keydown", esc);
+    return () => { document.removeEventListener("pointerdown", clic); document.removeEventListener("keydown", esc); };
+  }, [menu]);
   const copier = (txt, id) => { navigator.clipboard.writeText(txt); setCopie(id); setTimeout(() => setCopie(""), 1500); };
 
   async function choisirCV(e) {
@@ -357,7 +367,7 @@ CV:\n${cv}\nANNONCE:\n${annonce}`);
       texteCV = p?.cv_text || "";
       if (texteCV) { setCv(texteCV); setCvNom("CV de ton profil"); }
     }
-    if (!texteCV) { setErr("Ajoute d'abord ton CV dans l'onglet Profil."); aller("profil"); return; }
+    if (!texteCV) { setErr("Ajoute d'abord ton CV dans Mon profil (icône en haut à droite)."); aller("profil"); return; }
     if (!ann?.trim()) { setErr("L'annonce est vide : colle-la dans l'onglet Analyse."); aller("analyse"); return; }
     try {
       const a = await creerAdaptation({ offer_id, entreprise: ent || null, poste: pos || null, annonce: ann, cv_text: texteCV });
@@ -447,7 +457,6 @@ TEXTE:\n${ajoutTexte}`);
 
   const filtrees = candidatures.filter((c) => (fContrat === "Tous" || c.contrat === fContrat) && (fStatut === "Tous" || c.statut === fStatut));
   const tabs = [
-    { id: "profil", label: "Profil", court: "Profil", Icon: IcoProfil },
     { id: "radar", label: "Offres", court: "Offres", Icon: IcoOffres },
     { id: "analyse", label: "Analyse", court: "Analyse", Icon: IcoAnalyse },
     { id: "refonte", label: "Refonte CV", court: "CV", Icon: IcoCV },
@@ -475,15 +484,26 @@ TEXTE:\n${ajoutTexte}`);
               </button>
             ))}
           </nav>
-          <div className="ml-auto md:ml-0 md:w-48 flex justify-end relative">
-            <button onClick={() => setMenu((m) => !m)} aria-label="Compte" aria-expanded={menu}
-              className="w-10 h-10 rounded-full bg-white text-[13px] font-bold">{initiales(email)}</button>
-            {menu && (
-              <div className="absolute right-0 top-12 w-64 carte p-2 shadow-lg z-40">
-                <p className="m-0 px-3 py-2 text-[13px] text-stone-600 truncate">{email}</p>
-                <button onClick={deconnexion} className="w-full text-left px-3 h-11 rounded-xl text-sm font-semibold hover:bg-stone-100">Se déconnecter</button>
+          <div ref={menuRef} className="ml-auto md:ml-0 md:w-48 flex justify-end relative">
+            <button onClick={() => setMenu((m) => !m)} aria-label="Mon compte" aria-expanded={menu} aria-haspopup="menu"
+              title="Mon compte"
+              className={`w-10 h-10 rounded-full flex items-center justify-center transition ${tab === "profil" ? "bg-ink text-white" : "bg-white text-ink hover:bg-stone-200"}`}>
+              <IcoProfil size={20} />
+            </button>
+            {menu && (<>
+              <div role="menu" className="absolute right-0 top-12 w-64 carte p-2 shadow-lg z-40">
+                <div className="flex items-center gap-3 px-3 py-2.5">
+                  <span className="w-9 h-9 shrink-0 rounded-full bg-stone-100 flex items-center justify-center text-[12px] font-bold">{initiales(email)}</span>
+                  <p className="m-0 text-[13px] text-stone-600 truncate">{email}</p>
+                </div>
+                <div className="h-px bg-stone-200 mx-2 my-1" />
+                <button role="menuitem" onClick={() => aller("profil")}
+                  className={`w-full text-left px-3 h-11 rounded-xl text-sm font-semibold flex items-center gap-2.5 ${tab === "profil" ? "bg-stone-100" : "hover:bg-stone-100"}`}>
+                  <IcoProfil size={18} />Mon profil
+                </button>
+                <button role="menuitem" onClick={deconnexion} className="w-full text-left px-3 h-11 rounded-xl text-sm font-semibold text-stone-600 hover:bg-stone-100 hover:text-ink">Se déconnecter</button>
               </div>
-            )}
+            </>)}
           </div>
         </div>
       </header>
@@ -665,7 +685,7 @@ TEXTE:\n${ajoutTexte}`);
       </main>
 
       {/* Barre d'onglets mobile */}
-      <nav aria-label="Principal" className="no-print md:hidden fixed bottom-0 inset-x-0 z-30 bg-white border-t border-stone-200 grid grid-cols-6" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
+      <nav aria-label="Principal" className="no-print md:hidden fixed bottom-0 inset-x-0 z-30 bg-white border-t border-stone-200 grid grid-cols-5" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
         {tabs.map(({ id, court, Icon }) => (
           <button key={id} onClick={() => aller(id)} aria-current={tab === id ? "page" : undefined}
             className={`h-16 flex flex-col items-center justify-center gap-1 text-[11.5px] ${tab === id ? "text-ink font-bold" : "text-stone-500 font-medium"}`}>
