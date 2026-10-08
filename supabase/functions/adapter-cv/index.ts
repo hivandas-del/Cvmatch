@@ -1,4 +1,4 @@
-// Déclenche la tâche planifiée Claude « CVMatch — IA à la demande » (abonnement Claude, pas de clé API).
+// Déclenche la routine Claude « CV MATCH » (IA à la demande) (abonnement Claude, pas de clé API).
 // Deux usages :
 //   {id}        → « Adapter mon CV » : la demande est déjà dans cv_adaptations
 //   {profil:true} → « Mon profil » : CV + « ce que je cherche » déjà enregistrés dans search_profiles
@@ -13,7 +13,7 @@ const cors = {
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...cors, "content-type": "application/json" } });
 
-const URL_DEFAUT = "https://api.anthropic.com/v1/claude_code/routines/trig_01TQ2BeyfrBCtHByfHPGFEvw/fire";
+const URL_DEFAUT = "https://api.anthropic.com/v1/claude_code/routines/trig_01FwsZPEJhP6VSbFqHcE82FH/fire";
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
