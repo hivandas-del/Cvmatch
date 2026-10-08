@@ -7,6 +7,7 @@ import {
 import { extraireTexte } from "./extract";
 import Radar from "./Radar";
 import Refonte from "./Refonte";
+import Profil from "./Profil";
 import { tonScore, initiales } from "./ui";
 
 const STATUTS = ["À postuler", "Envoyée", "Relancée", "Entretien", "Refusée", "Offre"];
@@ -27,6 +28,7 @@ const Ico = ({ d, size = 20, children }) => (
   </svg>
 );
 export const IcoFleche = (p) => <Ico {...p} d="M5 12h14M13 6l6 6-6 6" />;
+const IcoProfil = (p) => <Ico {...p}><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></Ico>;
 const IcoOffres = (p) => <Ico {...p}><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="4" /></Ico>;
 const IcoAnalyse = (p) => <Ico {...p} d="M4 19V5M4 19h16M8 15v-4M12 15V8M16 15v-6" />;
 const IcoCV = (p) => <Ico {...p}><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" /><path d="M14 3v6h6M8 13h8M8 17h5" /></Ico>;
@@ -287,6 +289,14 @@ function Dashboard({ userId, email }) {
   const [ajoutTexte, setAjoutTexte] = useState("");
 
   useEffect(() => { chargerCandidatures().then(setCandidatures).catch(() => setErr("Chargement impossible.")); }, []);
+  // Le CV du profil sert de CV par défaut partout (Analyse, Adapter mon CV) ; sans profil, on commence par là.
+  useEffect(() => {
+    chargerProfil().then((p) => {
+      if (p?.cv_text) { setCv((c) => c || p.cv_text); setCvNom((n) => n || "CV de ton profil"); }
+      else setTab((t) => (t === "radar" ? "profil" : t));
+    }).catch(() => {});
+  }, []);
+  const majProfil = (p) => { if (p?.cv_text) { setCv(p.cv_text); setCvNom(p.cv_fichier || "CV de ton profil"); } };
   useEffect(() => {
     chargerAdaptations().then(setAdaptations).catch(() => {}).finally(() => setAdaptChargement(false));
   }, []);
@@ -347,7 +357,7 @@ CV:\n${cv}\nANNONCE:\n${annonce}`);
       texteCV = p?.cv_text || "";
       if (texteCV) { setCv(texteCV); setCvNom("CV de ton profil"); }
     }
-    if (!texteCV) { setErr("Ajoute d'abord ton CV dans l'onglet Analyse."); aller("analyse"); return; }
+    if (!texteCV) { setErr("Ajoute d'abord ton CV dans l'onglet Profil."); aller("profil"); return; }
     if (!ann?.trim()) { setErr("L'annonce est vide : colle-la dans l'onglet Analyse."); aller("analyse"); return; }
     try {
       const a = await creerAdaptation({ offer_id, entreprise: ent || null, poste: pos || null, annonce: ann, cv_text: texteCV });
@@ -437,6 +447,7 @@ TEXTE:\n${ajoutTexte}`);
 
   const filtrees = candidatures.filter((c) => (fContrat === "Tous" || c.contrat === fContrat) && (fStatut === "Tous" || c.statut === fStatut));
   const tabs = [
+    { id: "profil", label: "Profil", court: "Profil", Icon: IcoProfil },
     { id: "radar", label: "Offres", court: "Offres", Icon: IcoOffres },
     { id: "analyse", label: "Analyse", court: "Analyse", Icon: IcoAnalyse },
     { id: "refonte", label: "Refonte CV", court: "CV", Icon: IcoCV },
@@ -480,6 +491,7 @@ TEXTE:\n${ajoutTexte}`);
       <main className="max-w-6xl mx-auto px-4 sm:px-8 pt-2">
         {err && <div role="alert" className="mb-5 px-4 py-3.5 rounded-xl bg-red-50 text-red-800 text-sm">{err}</div>}
 
+        {tab === "profil" && <Profil onAller={aller} onProfil={majProfil} />}
         {tab === "radar" && <Radar onAdapter={adapterDepuisRadar} onSuivi={suivreDepuisRadar} />}
 
         {tab === "analyse" && (
@@ -653,7 +665,7 @@ TEXTE:\n${ajoutTexte}`);
       </main>
 
       {/* Barre d'onglets mobile */}
-      <nav aria-label="Principal" className="no-print md:hidden fixed bottom-0 inset-x-0 z-30 bg-white border-t border-stone-200 grid grid-cols-5" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
+      <nav aria-label="Principal" className="no-print md:hidden fixed bottom-0 inset-x-0 z-30 bg-white border-t border-stone-200 grid grid-cols-6" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
         {tabs.map(({ id, court, Icon }) => (
           <button key={id} onClick={() => aller(id)} aria-current={tab === id ? "page" : undefined}
             className={`h-16 flex flex-col items-center justify-center gap-1 text-[11.5px] ${tab === id ? "text-ink font-bold" : "text-stone-500 font-medium"}`}>
