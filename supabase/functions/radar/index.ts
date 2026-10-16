@@ -893,10 +893,11 @@ async function notifier(db: SupabaseClient, userId: string) {
   const fraicheurH = Number(prof.brief?.notif_fraicheur_h ?? 72);
   const { data: rows } = await db.from("offer_matches")
     .select("offer_id, score, prescore, score_cv_adapte, created_at, job_offers(title, company, location, url, posted_at, source)")
-    .eq("user_id", userId).eq("status", "nouveau").is("notified_at", null).limit(500);
+    .eq("user_id", userId).eq("status", "nouveau").eq("scored_by", "ia").is("notified_at", null).limit(500);
   if (!rows?.length) return { notif: 0 };
   const now = Date.now();
-  const note = (r: any) => r.score_cv_adapte ?? r.score ?? r.prescore ?? 0;
+  // Seules les notes IA comptent : une offre en pré-score attend sa vraie note avant toute notif.
+  const note = (r: any) => r.score_cv_adapte ?? r.score ?? 0;
   const age = (r: any) => (now - new Date(r.job_offers?.posted_at || r.created_at).getTime()) / 3600000;
   const fraiches = (rows as any[]).filter((r) => r.job_offers?.posted_at && age(r) <= fraicheurH && note(r) >= seuil)
     .sort((a, b) => note(b) - note(a));
