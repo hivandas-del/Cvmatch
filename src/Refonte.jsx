@@ -5,7 +5,7 @@ import { tonScore } from "./ui";
 const RE_LIEN = /(https?:\/\/[^\s,;)]+|www\.[^\s,;)]+|[\w.+-]+@[\w-]+(?:\.[\w-]+)+|\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:fr|com|io|dev|me|net|org|app|eu|ai)(?:\/[^\s,;)]*)?(?![\w@]))/gi;
 const versUrl = (t) => (/^https?:\/\//i.test(t) ? t : t.includes("@") && !t.includes("/") ? `mailto:${t}` : `https://${t}`);
 const enUrl = (u) => (/^(https?:|mailto:|tel:)/i.test(u) ? u : versUrl(u));
-const classeLien = "text-ink underline decoration-stone-300 underline-offset-[3px] hover:decoration-ink";
+const classeLien = "text-[#0563C1] underline underline-offset-[2px]";
 
 function TexteLie({ texte }) {
   const s = String(texte ?? "");
@@ -14,13 +14,6 @@ function TexteLie({ texte }) {
   return morceaux.map((m, i) => (i % 2 === 1
     ? <a key={i} href={versUrl(m.replace(/[.]$/, ""))} target="_blank" rel="noreferrer" className={classeLien}>{m}</a>
     : m));
-}
-function Lien({ c }) {
-  if (c && typeof c === "object") {
-    const t = c.texte || c.url;
-    return c.url ? <a href={enUrl(c.url)} target="_blank" rel="noreferrer" className={classeLien}>{t}</a> : <TexteLie texte={t} />;
-  }
-  return <TexteLie texte={c} />;
 }
 const lienEnTexte = (c) => {
   if (!c || typeof c !== "object") return c || "";
@@ -44,12 +37,18 @@ function rubriques(cv) {
 const elementsDe = (s) => (Array.isArray(s.elements) ? s.elements : []).filter((x) => x != null && x !== "");
 
 // ---------- texte brut du CV (copier / coller dans un éditeur) ----------
+const enteteExp = (e) => {
+  const tete = [e.poste, e.entreprise].filter(Boolean).join(" – ");
+  return [tete, e.lieu].filter(Boolean).join(" | ");
+};
+const groupeTexte = (c) => c.texte || (c.items || []).join(", ");
+
 export function cvEnTexte(cv) {
   if (!cv) return "";
   const l = [];
   l.push(cv.nom || "", cv.titre || "");
   const contact = (cv.contact || []).filter(Boolean).map(lienEnTexte).filter(Boolean);
-  if (contact.length) l.push(contact.join(" · "));
+  if (contact.length) l.push(contact.join(" | "));
   if (cv.accroche) l.push("", cv.accroche);
   for (const s of rubriques(cv)) {
     const el = elementsDe(s);
@@ -57,100 +56,138 @@ export function cvEnTexte(cv) {
     l.push("", (s.titre || "").toUpperCase());
     if (s.texte) l.push(s.texte);
     if (s.type === "experiences") el.forEach((e) => {
-      l.push("", [e.poste, [e.entreprise, e.lieu].filter(Boolean).join(", "), e.dates].filter(Boolean).join(" — "));
+      l.push([enteteExp(e), e.dates].filter(Boolean).join("    "));
       (e.puces || []).forEach((p) => l.push(`- ${p}`));
       (e.liens || []).filter(Boolean).forEach((x) => l.push(`  ${lienEnTexte(x)}`));
     });
-    else if (s.type === "formation") el.forEach((f) => l.push(`${[f.diplome, f.ecole, f.dates].filter(Boolean).join(" — ")}${f.detail ? "\n  " + f.detail : ""}`));
-    else if (s.type === "groupes") el.forEach((c) => l.push(`${c.groupe} : ${(c.items || []).join(", ")}`));
+    else if (s.type === "projets") el.forEach((p) => {
+      const liens = (p.liens || []).filter(Boolean).map(lienEnTexte).join(" · ");
+      if (p.en_ligne) l.push(`${p.titre} : ${p.texte || ""}${liens ? " → " + liens : ""}`);
+      else l.push(p.titre || "", `${p.texte || ""}${liens ? " → " + liens : ""}`);
+    });
+    else if (s.type === "formation") el.forEach((f) => {
+      if (f.ecole) l.push([f.ecole, f.dates].filter(Boolean).join("    "));
+      l.push(f.ecole ? f.diplome : [f.diplome, f.dates].filter(Boolean).join("    "));
+      if (f.detail) l.push(f.detail);
+    });
+    else if (s.type === "groupes") el.forEach((c) => l.push(c.groupe ? `${c.groupe} : ${groupeTexte(c)}` : groupeTexte(c)));
     else if (s.type === "ligne") l.push(el.map(lienEnTexte).join(" · "));
     else el.forEach((x) => l.push(`- ${typeof x === "object" ? lienEnTexte(x) : x}`));
   }
   return l.join("\n").trim();
 }
 
-// ---------- la feuille de CV (écran + impression A4) ----------
-const Section = ({ titre, children }) => (
-  <section className="cv-section">
-    <h3 className="m-0 mb-2 text-[10.5px] font-bold tracking-[0.14em] uppercase text-stone-500 border-b border-stone-200 pb-1">{titre}</h3>
-    {children}
-  </section>
-);
+// ---------- la feuille de CV : même mise en page que le CV d'Hivan (écran + impression A4) ----------
+// Calibri (Carlito en secours), nom centré espacé, contact séparé par « | » avec liens bleus,
+// rubriques en capitales espacées suivies d'un filet, puces « - », dates en italique à droite.
+const BLEU = "#0563C1";
+const classeLienCV = "underline underline-offset-[2px]";
+function LienCV({ c }) {
+  if (c && typeof c === "object") {
+    const t = c.texte || c.url;
+    return c.url ? <a href={enUrl(c.url)} target="_blank" rel="noreferrer" className={classeLienCV} style={{ color: BLEU }}>{t}</a> : <TexteLie texte={t} />;
+  }
+  return <TexteLie texte={c} />;
+}
+const Sep = () => <span> | </span>;
+
+function TitreRubrique({ titre }) {
+  return (
+    <div className="cv-rub flex items-center gap-3">
+      <h3 className="m-0 shrink-0 font-normal uppercase tracking-[0.2em] text-[1.1em] leading-none">{titre}</h3>
+      <span className="flex-1 border-b border-black translate-y-[0.1em]" aria-hidden="true" />
+    </div>
+  );
+}
+
+// « Cours : … » → libellé souligné, comme dans le CV.
+function Detail({ texte }) {
+  const m = String(texte || "").match(/^([^:]{1,30}?)\s*:\s*(.*)$/s);
+  if (!m) return <TexteLie texte={texte} />;
+  return <><span className="underline">{m[1]}</span> : <TexteLie texte={m[2]} /></>;
+}
 
 function Rubrique({ s }) {
   const el = elementsDe(s);
   if (!el.length && !s.texte) return null;
   return (
-    <Section titre={s.titre}>
-      {s.texte && <p className="m-0 mb-1"><TexteLie texte={s.texte} /></p>}
-      {s.type === "experiences" && (
-        <div className="flex flex-col gap-3.5">
-          {el.map((e, i) => (
-            <div key={i} className="cv-bloc">
-              <div className="flex flex-wrap items-baseline justify-between gap-x-3">
-                <p className="m-0 font-semibold text-[13.5px]">{e.poste}{(e.entreprise || e.lieu) && <span className="font-normal text-stone-600">{e.poste ? " · " : ""}{[e.entreprise, e.lieu].filter(Boolean).join(", ")}</span>}</p>
-                {e.dates && <p className="m-0 text-[12px] text-stone-500 tabular-nums whitespace-nowrap">{e.dates}</p>}
-              </div>
-              {e.puces?.length > 0 && (
-                <ul className="mt-1 mb-0 pl-4 flex flex-col gap-0.5 list-disc marker:text-stone-400">
-                  {e.puces.map((p, j) => <li key={j}><TexteLie texte={p} /></li>)}
-                </ul>
-              )}
-              {e.liens?.filter(Boolean).length > 0 && (
-                <p className="m-0 mt-1 text-[12px] flex flex-wrap gap-x-3">{e.liens.filter(Boolean).map((x, j) => <Lien key={j} c={x} />)}</p>
-              )}
-            </div>
-          ))}
+    <section className="cv-section flex flex-col gap-[0.35em]">
+      <TitreRubrique titre={s.titre} />
+      {s.texte && String(s.texte).split(/\n+/).map((p, i) => <p key={i} className="m-0"><TexteLie texte={p} /></p>)}
+
+      {s.type === "experiences" && el.map((e, i) => (
+        <div key={i} className={`cv-bloc ${i > 0 ? "mt-[0.45em]" : ""}`}>
+          <div className="flex items-baseline justify-between gap-3">
+            <p className="m-0 font-bold">{enteteExp(e)}</p>
+            {e.dates && <p className="m-0 italic whitespace-nowrap">{e.dates}</p>}
+          </div>
+          {(e.puces || []).map((p, j) => <p key={j} className="m-0 mt-[0.15em]">- <TexteLie texte={p} /></p>)}
+          {e.liens?.filter(Boolean).length > 0 && (
+            <p className="m-0 mt-[0.15em]">→ {e.liens.filter(Boolean).map((x, j) => <span key={j}>{j > 0 && " · "}<LienCV c={x} /></span>)}</p>
+          )}
         </div>
-      )}
-      {s.type === "formation" && (
-        <div className="flex flex-col gap-2">
-          {el.map((f, i) => (
-            <div key={i} className="cv-bloc">
-              <div className="flex flex-wrap items-baseline justify-between gap-x-3">
-                <p className="m-0 font-semibold">{f.diplome}{f.ecole && <span className="font-normal text-stone-600"> · {f.ecole}</span>}</p>
-                {f.dates && <p className="m-0 text-[12px] text-stone-500 tabular-nums whitespace-nowrap">{f.dates}</p>}
-              </div>
-              {f.detail && <p className="m-0 text-stone-600"><TexteLie texte={f.detail} /></p>}
+      ))}
+
+      {s.type === "projets" && el.map((p, i) => {
+        const liens = (p.liens || []).filter(Boolean);
+        const suite = liens.length > 0 && <> → {liens.map((x, j) => <span key={j}>{j > 0 && " · "}<LienCV c={x} /></span>)}</>;
+        return p.en_ligne ? (
+          <p key={i} className="cv-bloc m-0"><b>{p.titre} :</b> <TexteLie texte={p.texte} />{suite}</p>
+        ) : (
+          <div key={i} className="cv-bloc">
+            <p className="m-0 font-bold">{p.titre}</p>
+            <p className="m-0 mt-[0.15em]"><TexteLie texte={p.texte} />{suite}</p>
+          </div>
+        );
+      })}
+
+      {s.type === "formation" && el.map((f, i) => (
+        <div key={i} className={`cv-bloc ${i > 0 ? "mt-[0.25em]" : ""}`}>
+          {f.ecole && (
+            <div className="flex items-baseline justify-between gap-3">
+              <p className="m-0 uppercase">{f.ecole}</p>
+              {f.dates && <p className="m-0 italic whitespace-nowrap">{f.dates}</p>}
             </div>
-          ))}
+          )}
+          <div className="flex items-baseline justify-between gap-3">
+            <p className="m-0 font-bold">{f.diplome}</p>
+            {!f.ecole && f.dates && <p className="m-0 italic whitespace-nowrap">{f.dates}</p>}
+          </div>
+          {f.detail && <p className="m-0"><Detail texte={f.detail} /></p>}
         </div>
-      )}
+      ))}
+
       {s.type === "groupes" && (
-        <div className="flex flex-col gap-1">
-          {el.map((c, i) => (
-            <p key={i} className="m-0">{c.groupe && <><span className="font-semibold">{c.groupe}</span><span className="text-stone-400"> — </span></>}{(c.items || []).join(" · ")}</p>
-          ))}
+        <div className="flex flex-col gap-[0.1em]">
+          {el.map((c, i) => <p key={i} className="m-0">{c.groupe && <><b>{c.groupe}</b> : </>}<TexteLie texte={groupeTexte(c)} /></p>)}
         </div>
       )}
-      {s.type === "ligne" && (
-        <p className="m-0">{el.map((x, i) => <span key={i}>{i > 0 && <span className="text-stone-400"> · </span>}<Lien c={x} /></span>)}</p>
-      )}
-      {!["experiences", "formation", "groupes", "ligne"].includes(s.type) && el.length > 0 && (
-        <ul className="m-0 pl-4 flex flex-col gap-0.5 list-disc marker:text-stone-400">
-          {el.map((x, i) => <li key={i}><Lien c={x} /></li>)}
-        </ul>
-      )}
-    </Section>
+
+      {s.type === "ligne" && <p className="m-0">{el.map((x, i) => <span key={i}>{i > 0 && " · "}<LienCV c={x} /></span>)}</p>}
+
+      {!["experiences", "projets", "formation", "groupes", "ligne", "texte"].includes(s.type) && el.map((x, i) => (
+        <p key={i} className="m-0">- <LienCV c={x} /></p>
+      ))}
+    </section>
   );
 }
 
-function FeuilleCV({ cv }) {
+export function FeuilleCV({ cv }) {
   const contact = (cv.contact || []).filter(Boolean);
   return (
-    <article id="cv-feuille" className="bg-white text-ink rounded-[18px] px-6 py-7 sm:px-12 sm:py-11 text-[13px] leading-[1.5] flex flex-col gap-5 shadow-[0_1px_0_rgba(0,0,0,0.04)]">
-      <header>
-        <h2 className="m-0 text-[26px] sm:text-[30px] font-semibold tracking-[-0.03em] leading-none">{cv.nom}</h2>
-        {cv.titre && <p className="mt-2 mb-0 text-[15px] font-semibold text-stone-700">{cv.titre}</p>}
-        {contact.length > 0 && (
-          <p className="mt-2 mb-0 text-[12px] text-stone-500 flex flex-wrap gap-x-3 gap-y-0.5">
-            {contact.map((c, i) => <span key={i}><Lien c={c} /></span>)}
-          </p>
-        )}
-        {cv.accroche && <p className="mt-4 mb-0 text-[13.5px] text-stone-800">{cv.accroche}</p>}
-      </header>
-      {rubriques(cv).map((s, i) => <Rubrique key={i} s={s} />)}
-    </article>
+    <div className="overflow-x-auto rounded-[18px] bg-white">
+      <article id="cv-feuille" className="cv-feuille bg-white text-black mx-auto px-5 py-7 sm:px-[56px] sm:py-[48px] flex flex-col gap-[0.7em]">
+        <header className="text-center flex flex-col gap-[0.45em] mb-[0.2em]">
+          <h2 className="m-0 text-[2.6em] font-normal tracking-[0.12em] leading-none uppercase">{cv.nom}</h2>
+          {cv.titre && <p className="m-0 mt-[0.35em] text-[1.1em] uppercase tracking-[0.3em]">{cv.titre}</p>}
+          {contact.length > 0 && (
+            <p className="m-0">{contact.map((c, i) => <span key={i}>{i > 0 && <Sep />}{typeof c === "object" ? <LienCV c={c} /> : c}</span>)}</p>
+          )}
+        </header>
+        {cv.accroche && <p className="m-0">{cv.accroche}</p>}
+        {rubriques(cv).map((s, i) => <Rubrique key={i} s={s} />)}
+      </article>
+    </div>
   );
 }
 
@@ -200,6 +237,22 @@ function Attente({ a, raison, onRelancer }) {
   );
 }
 
+// Met la feuille au gabarit A4 (180 mm de large, 273 mm utiles) et réduit le corps du texte
+// juste ce qu'il faut pour tenir sur une page, sans jamais retirer de contenu.
+export function ajusterUnePage() {
+  const f = document.getElementById("cv-feuille");
+  if (!f) return;
+  f.classList.add("cv-a4");
+  const mm = 96 / 25.4;
+  const hauteurUtile = 273 * mm;
+  let k = 1;
+  f.style.setProperty("--cv-k", "1");
+  for (let i = 0; i < 14 && f.scrollHeight > hauteurUtile && k > 0.78; i++) {
+    k = Math.round((k - 0.02) * 100) / 100;
+    f.style.setProperty("--cv-k", String(k));
+  }
+}
+
 // ---------- page Refonte CV ----------
 export default function Refonte({ adaptations, courante, raisons, onChoisir, onRelancer, onSupprimer, onAller, chargement }) {
   const [copie, setCopie] = useState(false);
@@ -211,7 +264,13 @@ export default function Refonte({ adaptations, courante, raisons, onChoisir, onR
     const nom = [cv?.nom, a?.poste, a?.entreprise].filter(Boolean).join(" - ");
     document.title = `CV ${nom}`.replace(/[\\/:*?"<>|]+/g, " ");
     document.body.classList.add("impression-cv");
-    const fin = () => { document.body.classList.remove("impression-cv"); document.title = titreAvant; window.removeEventListener("afterprint", fin); };
+    ajusterUnePage();
+    const fin = () => {
+      document.body.classList.remove("impression-cv");
+      document.getElementById("cv-feuille")?.classList.remove("cv-a4");
+      document.title = titreAvant;
+      window.removeEventListener("afterprint", fin);
+    };
     window.addEventListener("afterprint", fin);
     window.print();
     setTimeout(fin, 1500);

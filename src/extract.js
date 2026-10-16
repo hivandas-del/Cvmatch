@@ -47,7 +47,8 @@ export async function extraireTexte(file) {
     for (let i = 1; i <= pdf.numPages; i++) {
       const page = await pdf.getPage(i);
       const content = await page.getTextContent();
-      texte += content.items.map((it) => it.str).join(" ") + "\n";
+      // Garde les retours à la ligne du PDF : la refonte doit voir la forme exacte du CV.
+      texte += content.items.map((it) => it.str + (it.hasEOL ? "\n" : "")).join("").replace(/[ \t]+\n/g, "\n") + "\n";
       const annots = await page.getAnnotations().catch(() => []);
       for (const a of annots) {
         if (a.subtype === "Link" && a.url) liens.push({ texte: texteSous(a.rect, content.items), url: a.url });
