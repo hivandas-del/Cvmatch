@@ -1,31 +1,71 @@
 import { useEffect, useState } from "react";
 import { tonScore } from "./ui";
 
+// ---------- liens : contact {texte, url} ou texte brut avec des adresses dedans ----------
+const RE_LIEN = /(https?:\/\/[^\s,;)]+|www\.[^\s,;)]+|[\w.+-]+@[\w-]+(?:\.[\w-]+)+|\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:fr|com|io|dev|me|net|org|app|eu|ai)(?:\/[^\s,;)]*)?(?![\w@]))/gi;
+const versUrl = (t) => (/^https?:\/\//i.test(t) ? t : t.includes("@") && !t.includes("/") ? `mailto:${t}` : `https://${t}`);
+const enUrl = (u) => (/^(https?:|mailto:|tel:)/i.test(u) ? u : versUrl(u));
+const classeLien = "text-ink underline decoration-stone-300 underline-offset-[3px] hover:decoration-ink";
+
+function TexteLie({ texte }) {
+  const s = String(texte ?? "");
+  const morceaux = s.split(RE_LIEN);
+  if (morceaux.length === 1) return s;
+  return morceaux.map((m, i) => (i % 2 === 1
+    ? <a key={i} href={versUrl(m.replace(/[.]$/, ""))} target="_blank" rel="noreferrer" className={classeLien}>{m}</a>
+    : m));
+}
+function Lien({ c }) {
+  if (c && typeof c === "object") {
+    const t = c.texte || c.url;
+    return c.url ? <a href={enUrl(c.url)} target="_blank" rel="noreferrer" className={classeLien}>{t}</a> : <TexteLie texte={t} />;
+  }
+  return <TexteLie texte={c} />;
+}
+const lienEnTexte = (c) => {
+  if (!c || typeof c !== "object") return c || "";
+  if (!c.url || !c.texte) return c.url || c.texte || "";
+  const u = c.url.replace(/^mailto:/i, "");
+  return c.texte.includes(u.replace(/^https?:\/\//i, "")) ? c.texte : `${c.texte} : ${u}`;
+};
+
+// Ancien format (avant le 16 oct.) → rubriques, pour afficher l'historique avec le même rendu.
+function rubriques(cv) {
+  if (Array.isArray(cv.sections)) return cv.sections;
+  const r = [];
+  if (cv.experiences?.length) r.push({ titre: "Expériences", type: "experiences", elements: cv.experiences });
+  if (cv.formation?.length) r.push({ titre: "Formation", type: "formation", elements: cv.formation });
+  if (cv.competences?.length) r.push({ titre: "Compétences", type: "groupes", elements: cv.competences });
+  if (cv.langues?.length) r.push({ titre: "Langues", type: "ligne", elements: cv.langues });
+  const extras = (cv.extras || []).filter(Boolean);
+  if (extras.length) r.push({ titre: "En plus", type: "ligne", elements: extras });
+  return r;
+}
+const elementsDe = (s) => (Array.isArray(s.elements) ? s.elements : []).filter((x) => x != null && x !== "");
+
 // ---------- texte brut du CV (copier / coller dans un éditeur) ----------
 export function cvEnTexte(cv) {
   if (!cv) return "";
   const l = [];
   l.push(cv.nom || "", cv.titre || "");
-  if (cv.contact?.length) l.push(cv.contact.filter(Boolean).join(" · "));
+  const contact = (cv.contact || []).filter(Boolean).map(lienEnTexte).filter(Boolean);
+  if (contact.length) l.push(contact.join(" · "));
   if (cv.accroche) l.push("", cv.accroche);
-  if (cv.experiences?.length) {
-    l.push("", "EXPÉRIENCES");
-    cv.experiences.forEach((e) => {
-      l.push("", `${e.poste} — ${[e.entreprise, e.lieu].filter(Boolean).join(", ")}${e.dates ? " — " + e.dates : ""}`);
+  for (const s of rubriques(cv)) {
+    const el = elementsDe(s);
+    if (!el.length && !s.texte) continue;
+    l.push("", (s.titre || "").toUpperCase());
+    if (s.texte) l.push(s.texte);
+    if (s.type === "experiences") el.forEach((e) => {
+      l.push("", [e.poste, [e.entreprise, e.lieu].filter(Boolean).join(", "), e.dates].filter(Boolean).join(" — "));
       (e.puces || []).forEach((p) => l.push(`- ${p}`));
+      (e.liens || []).filter(Boolean).forEach((x) => l.push(`  ${lienEnTexte(x)}`));
     });
+    else if (s.type === "formation") el.forEach((f) => l.push(`${[f.diplome, f.ecole, f.dates].filter(Boolean).join(" — ")}${f.detail ? "\n  " + f.detail : ""}`));
+    else if (s.type === "groupes") el.forEach((c) => l.push(`${c.groupe} : ${(c.items || []).join(", ")}`));
+    else if (s.type === "ligne") l.push(el.map(lienEnTexte).join(" · "));
+    else el.forEach((x) => l.push(`- ${typeof x === "object" ? lienEnTexte(x) : x}`));
   }
-  if (cv.formation?.length) {
-    l.push("", "FORMATION");
-    cv.formation.forEach((f) => l.push(`${f.diplome} — ${f.ecole}${f.dates ? " — " + f.dates : ""}${f.detail ? "\n  " + f.detail : ""}`));
-  }
-  if (cv.competences?.length) {
-    l.push("", "COMPÉTENCES");
-    cv.competences.forEach((c) => l.push(`${c.groupe} : ${(c.items || []).join(", ")}`));
-  }
-  if (cv.langues?.length) l.push("", "LANGUES", cv.langues.join(" · "));
-  const extras = (cv.extras || []).filter(Boolean);
-  if (extras.length) l.push("", "EN PLUS", ...extras.map((x) => `- ${x}`));
   return l.join("\n").trim();
 }
 
@@ -37,71 +77,79 @@ const Section = ({ titre, children }) => (
   </section>
 );
 
+function Rubrique({ s }) {
+  const el = elementsDe(s);
+  if (!el.length && !s.texte) return null;
+  return (
+    <Section titre={s.titre}>
+      {s.texte && <p className="m-0 mb-1"><TexteLie texte={s.texte} /></p>}
+      {s.type === "experiences" && (
+        <div className="flex flex-col gap-3.5">
+          {el.map((e, i) => (
+            <div key={i} className="cv-bloc">
+              <div className="flex flex-wrap items-baseline justify-between gap-x-3">
+                <p className="m-0 font-semibold text-[13.5px]">{e.poste}{(e.entreprise || e.lieu) && <span className="font-normal text-stone-600">{e.poste ? " · " : ""}{[e.entreprise, e.lieu].filter(Boolean).join(", ")}</span>}</p>
+                {e.dates && <p className="m-0 text-[12px] text-stone-500 tabular-nums whitespace-nowrap">{e.dates}</p>}
+              </div>
+              {e.puces?.length > 0 && (
+                <ul className="mt-1 mb-0 pl-4 flex flex-col gap-0.5 list-disc marker:text-stone-400">
+                  {e.puces.map((p, j) => <li key={j}><TexteLie texte={p} /></li>)}
+                </ul>
+              )}
+              {e.liens?.filter(Boolean).length > 0 && (
+                <p className="m-0 mt-1 text-[12px] flex flex-wrap gap-x-3">{e.liens.filter(Boolean).map((x, j) => <Lien key={j} c={x} />)}</p>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+      {s.type === "formation" && (
+        <div className="flex flex-col gap-2">
+          {el.map((f, i) => (
+            <div key={i} className="cv-bloc">
+              <div className="flex flex-wrap items-baseline justify-between gap-x-3">
+                <p className="m-0 font-semibold">{f.diplome}{f.ecole && <span className="font-normal text-stone-600"> · {f.ecole}</span>}</p>
+                {f.dates && <p className="m-0 text-[12px] text-stone-500 tabular-nums whitespace-nowrap">{f.dates}</p>}
+              </div>
+              {f.detail && <p className="m-0 text-stone-600"><TexteLie texte={f.detail} /></p>}
+            </div>
+          ))}
+        </div>
+      )}
+      {s.type === "groupes" && (
+        <div className="flex flex-col gap-1">
+          {el.map((c, i) => (
+            <p key={i} className="m-0">{c.groupe && <><span className="font-semibold">{c.groupe}</span><span className="text-stone-400"> — </span></>}{(c.items || []).join(" · ")}</p>
+          ))}
+        </div>
+      )}
+      {s.type === "ligne" && (
+        <p className="m-0">{el.map((x, i) => <span key={i}>{i > 0 && <span className="text-stone-400"> · </span>}<Lien c={x} /></span>)}</p>
+      )}
+      {!["experiences", "formation", "groupes", "ligne"].includes(s.type) && el.length > 0 && (
+        <ul className="m-0 pl-4 flex flex-col gap-0.5 list-disc marker:text-stone-400">
+          {el.map((x, i) => <li key={i}><Lien c={x} /></li>)}
+        </ul>
+      )}
+    </Section>
+  );
+}
+
 function FeuilleCV({ cv }) {
-  const extras = (cv.extras || []).filter(Boolean);
+  const contact = (cv.contact || []).filter(Boolean);
   return (
     <article id="cv-feuille" className="bg-white text-ink rounded-[18px] px-6 py-7 sm:px-12 sm:py-11 text-[13px] leading-[1.5] flex flex-col gap-5 shadow-[0_1px_0_rgba(0,0,0,0.04)]">
       <header>
         <h2 className="m-0 text-[26px] sm:text-[30px] font-semibold tracking-[-0.03em] leading-none">{cv.nom}</h2>
-        <p className="mt-2 mb-0 text-[15px] font-semibold text-stone-700">{cv.titre}</p>
-        {cv.contact?.filter(Boolean).length > 0 && (
+        {cv.titre && <p className="mt-2 mb-0 text-[15px] font-semibold text-stone-700">{cv.titre}</p>}
+        {contact.length > 0 && (
           <p className="mt-2 mb-0 text-[12px] text-stone-500 flex flex-wrap gap-x-3 gap-y-0.5">
-            {cv.contact.filter(Boolean).map((c, i) => <span key={i}>{c}</span>)}
+            {contact.map((c, i) => <span key={i}><Lien c={c} /></span>)}
           </p>
         )}
         {cv.accroche && <p className="mt-4 mb-0 text-[13.5px] text-stone-800">{cv.accroche}</p>}
       </header>
-
-      {cv.experiences?.length > 0 && (
-        <Section titre="Expériences">
-          <div className="flex flex-col gap-3.5">
-            {cv.experiences.map((e, i) => (
-              <div key={i} className="cv-bloc">
-                <div className="flex flex-wrap items-baseline justify-between gap-x-3">
-                  <p className="m-0 font-semibold text-[13.5px]">{e.poste}<span className="font-normal text-stone-600"> · {[e.entreprise, e.lieu].filter(Boolean).join(", ")}</span></p>
-                  {e.dates && <p className="m-0 text-[12px] text-stone-500 tabular-nums whitespace-nowrap">{e.dates}</p>}
-                </div>
-                <ul className="mt-1 mb-0 pl-4 flex flex-col gap-0.5 list-disc marker:text-stone-400">
-                  {(e.puces || []).map((p, j) => <li key={j}>{p}</li>)}
-                </ul>
-              </div>
-            ))}
-          </div>
-        </Section>
-      )}
-
-      {cv.formation?.length > 0 && (
-        <Section titre="Formation">
-          <div className="flex flex-col gap-2">
-            {cv.formation.map((f, i) => (
-              <div key={i} className="cv-bloc">
-                <div className="flex flex-wrap items-baseline justify-between gap-x-3">
-                  <p className="m-0 font-semibold">{f.diplome}<span className="font-normal text-stone-600"> · {f.ecole}</span></p>
-                  {f.dates && <p className="m-0 text-[12px] text-stone-500 tabular-nums whitespace-nowrap">{f.dates}</p>}
-                </div>
-                {f.detail && <p className="m-0 text-stone-600">{f.detail}</p>}
-              </div>
-            ))}
-          </div>
-        </Section>
-      )}
-
-      {cv.competences?.length > 0 && (
-        <Section titre="Compétences">
-          <div className="flex flex-col gap-1">
-            {cv.competences.map((c, i) => (
-              <p key={i} className="m-0"><span className="font-semibold">{c.groupe}</span><span className="text-stone-400"> — </span>{(c.items || []).join(" · ")}</p>
-            ))}
-          </div>
-        </Section>
-      )}
-
-      {(cv.langues?.length > 0 || extras.length > 0) && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 cv-section">
-          {cv.langues?.length > 0 && <Section titre="Langues"><p className="m-0">{cv.langues.join(" · ")}</p></Section>}
-          {extras.length > 0 && <Section titre="En plus"><p className="m-0">{extras.join(" · ")}</p></Section>}
-        </div>
-      )}
+      {rubriques(cv).map((s, i) => <Rubrique key={i} s={s} />)}
     </article>
   );
 }
