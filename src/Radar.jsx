@@ -12,8 +12,8 @@ const TRIS = [["score", "Meilleur score"], ["recent", "Plus récentes"], ["salai
 const CONTRATS = ["CDI", "VIE", "CDD", "—"];
 const SOURCES = [["sites", "Sites carrières"], ["Business France VIE", "Business France (VIE)"], ["Adzuna", "Adzuna"], ["JSearch", "JSearch"], ["France Travail", "France Travail"],
   ["Welcome to the Jungle", "Welcome to the Jungle"], ["LinkedIn", "LinkedIn"], ["HelloWork", "HelloWork"], ["Jobijoba", "Jobijoba"]];
-const NOTES = [["toutes", "Toutes"], ["ia", "Notées par l'IA"], ["pre", "Pré-score seulement"]];
-const FILTRES_VIDES = { seuil: 0, periode: 0, contrats: [], sources: [], pays: [], secteurs: [], note: "toutes", salaire: false, remote: false };
+const NOTES = [["ia", "Notées par l'IA"], ["pre", "En attente de note"], ["toutes", "Toutes"]];
+const FILTRES_VIDES = { seuil: 0, periode: 0, contrats: [], sources: [], pays: [], secteurs: [], note: "ia", salaire: false, remote: false };
 const famille = (src = "") => (src.startsWith("Carrières") ? "sites" : src.startsWith("JSearch") ? "JSearch" : src);
 const nomPays = (() => {
   let dn = null;
@@ -27,13 +27,15 @@ const lireFiltres = () => {
 };
 const nbActifs = (f) =>
   (f.seuil ? 1 : 0) + (f.periode ? 1 : 0) + f.contrats.length + f.sources.length + f.pays.length + f.secteurs.length
-  + (f.note !== "toutes" ? 1 : 0) + (f.salaire ? 1 : 0) + (f.remote ? 1 : 0);
+  + (f.note !== "ia" ? 1 : 0) + (f.salaire ? 1 : 0) + (f.remote ? 1 : 0);
 const VUES = [["a_voir", "À regarder"], ["nouveau", "Nouvelles"], ["ajoute", "Ajoutées au suivi"], ["ignore", "Ignorées"]];
 const pisteLabel = { A: "CDI IDF", B: "International", VIE: "VIE" };
 const API_SOURCES = ["France Travail", "Adzuna", "JSearch", "Business France VIE", "Welcome to the Jungle", "LinkedIn", "HelloWork", "Jobijoba"];
 const NOM_COURT = { "Business France VIE": "Business France", "Welcome to the Jungle": "WTTJ" };
 // Note affichée : celle du CV adapté si « Adapter mon CV » a tourné, sinon la note IA du CV de base.
-const scoreOf = (r) => r.score_cv_adapte ?? r.score ?? r.prescore ?? 0;
+// Le pré-score (mots-clés) n'est JAMAIS une note : il sert seulement à choisir quelles offres l'IA lit en premier.
+const scoreOf = (r) => r.score_cv_adapte ?? (r.scored_by === "ia" ? r.score : null);
+const cleScore = (r) => scoreOf(r) ?? -1;
 function ilYa(d) {
   if (!d) return "";
   const h = Math.max(0, (Date.now() - new Date(d)) / 3600000);
@@ -149,11 +151,11 @@ function OffreCard({ r, ouvert, onToggle, onAdapter, onSuivi, onPostule, onIgnor
     <article className="carte p-5 flex flex-col gap-4 min-w-0">
       <button type="button" onClick={onToggle} aria-expanded={ouvert} className="flex gap-3.5 text-left">
         <span className="w-14 h-14 shrink-0 rounded-2xl flex flex-col items-center justify-center leading-none" style={{ background: t.bg, color: t.fg }}
-          title={r.score_cv_adapte != null ? `Note IA avec ton CV adapté (CV de base : ${r.score ?? "—"})` : pre ? "Pré-score par mots-clés, en attente de la note IA" : "Note IA de ton CV de base"}>
-          <span className="text-[22px] font-bold tabular-nums">{s}</span>
+          title={r.score_cv_adapte != null ? `Note IA avec ton CV adapté (CV de base : ${pre ? "—" : r.score ?? "—"})` : s == null ? "Pas encore notée par l'IA : elle le sera au prochain passage du matin" : "Note IA de ton CV de base"}>
+          <span className="text-[22px] font-bold tabular-nums">{s ?? "—"}</span>
           {r.score_cv_adapte != null
-            ? <span className="text-[9.5px] font-semibold uppercase tracking-wider mt-0.5 opacity-80">{r.score != null && r.score_cv_adapte > r.score ? `+${r.score_cv_adapte - r.score} CV` : "CV adapté"}</span>
-            : pre && <span className="text-[9.5px] font-semibold uppercase tracking-wider mt-0.5 opacity-80">pré</span>}
+            ? <span className="text-[9.5px] font-semibold uppercase tracking-wider mt-0.5 opacity-80">{!pre && r.score != null && r.score_cv_adapte > r.score ? `+${r.score_cv_adapte - r.score} CV` : "CV adapté"}</span>
+            : s == null && <span className="text-[9.5px] font-semibold uppercase tracking-wider mt-0.5 opacity-80">à noter</span>}
         </span>
         <span className="min-w-0 flex-1">
           <span className="flex items-start gap-2">
@@ -166,7 +168,7 @@ function OffreCard({ r, ouvert, onToggle, onAdapter, onSuivi, onPostule, onIgnor
 
       <div className="flex flex-wrap items-center gap-1.5">
         {fraiche && <span className="puce bg-ink text-white font-semibold" title="Publiée il y a moins de 48 h">Tout frais · {ilYa(o.posted_at)}</span>}
-        <span className="text-[13px] font-semibold" style={{ color: t.fg }}>{t.label}</span>
+        <span className="text-[13px] font-semibold" style={{ color: t.fg }}>{s == null ? "Note IA à venir" : t.label}</span>
         {r.piste && <span className="puce bg-stone-100 font-medium">{pisteLabel[r.piste]}</span>}
         {o.contract && o.contract !== r.piste && <span className="puce bg-stone-100">{o.contract}</span>}
         {sal && <span className="puce bg-stone-100">{sal}</span>}
@@ -418,12 +420,12 @@ export default function Radar({ onAdapter, onSuivi }) {
     const depuis = f.periode ? Date.now() - f.periode * 86400000 : 0;
     const sal = (r) => r.job_offers?.salary_max || r.job_offers?.salary_min || 0;
     const ordre = {
-      score: (a, b) => scoreOf(b) - scoreOf(a) || datePub(b) - datePub(a),
-      recent: (a, b) => datePub(b) - datePub(a) || scoreOf(b) - scoreOf(a),
-      salaire: (a, b) => sal(b) - sal(a) || scoreOf(b) - scoreOf(a),
+      score: (a, b) => cleScore(b) - cleScore(a) || datePub(b) - datePub(a),
+      recent: (a, b) => datePub(b) - datePub(a) || cleScore(b) - cleScore(a),
+      salaire: (a, b) => sal(b) - sal(a) || cleScore(b) - cleScore(a),
     }[tri];
     return base
-      .filter((r) => scoreOf(r) >= f.seuil)
+      .filter((r) => !f.seuil || cleScore(r) >= f.seuil)
       .filter((r) => !depuis || datePub(r) >= depuis)
       .filter((r) => !f.contrats.length || f.contrats.includes(["CDI", "VIE", "CDD"].includes(r.job_offers?.contract) ? r.job_offers.contract : "—"))
       .filter((r) => !f.sources.length || f.sources.includes(famille(r.job_offers?.source)))
