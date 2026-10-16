@@ -785,21 +785,35 @@ async function scoreUser(db: SupabaseClient, userId: string, aiLimit = 36) {
   const brief = prof.brief ?? {};
   const since = new Date(Date.now() - 21 * 86400000).toISOString();
 
-  // 1) nouvelles offres pas encore évaluées pour cet utilisateur
-  const { data: done } = await db.from("offer_matches").select("offer_id").eq("user_id", userId).gte("created_at", new Date(Date.now() - 40 * 86400000).toISOString());
-  const seen = new Set((done ?? []).map((d: any) => d.offer_id));
+  // 1) nouvelles offres pas encore évaluées pour cet utilisateur.
+  // PostgREST renvoie 1 000 lignes max par requête : on pagine, sinon toutes les offres au-delà
+  // étaient réévaluées à chaque passage et la fonction dépassait son temps CPU.
+  const seen = new Set<string>();
+  const depuis40j = new Date(Date.now() - 40 * 86400000).toISOString();
+  for (let page = 0; page < 50; page++) {
+    const { data: done } = await db.from("offer_matches").select("offer_id").eq("user_id", userId).gte("created_at", depuis40j)
+      .order("offer_id").range(page * 1000, page * 1000 + 999);
+    for (const d of done ?? []) seen.add(d.offer_id);
+    if (!done || done.length < 1000) break;
+  }
+  // On repère d'abord les identifiants (léger), puis on ne charge le texte complet que des offres inédites.
+  const inedites: string[] = [];
+  for (let page = 0; page < 30; page++) {
+    const { data: ids } = await db.from("job_offers").select("id").gte("first_seen_at", since)
+      .order("first_seen_at", { ascending: false }).range(page * 1000, page * 1000 + 999);
+    for (const x of ids ?? []) if (!seen.has(x.id)) inedites.push(x.id);
+    if (!ids || ids.length < 1000) break;
+  }
   let added = 0, excluded = 0;
-  for (let page = 0; page < 20; page++) {
-    const { data: offers } = await db.from("job_offers").select("*").gte("first_seen_at", since).order("first_seen_at", { ascending: false }).range(page * 500, page * 500 + 499);
-    if (!offers?.length) break;
-    const rows = offers.filter((o: any) => !seen.has(o.id)).map((o: any) => {
+  for (let i = 0; i < inedites.length; i += 150) {
+    const { data: offers } = await db.from("job_offers").select("*").in("id", inedites.slice(i, i + 150));
+    const rows = (offers ?? []).map((o: any) => {
       const ev: any = evaluate(o, brief);
       if (ev.excluded) { excluded++; return { user_id: userId, offer_id: o.id, status: "exclu", verdict: ev.excluded, reasons: [] }; }
       added++;
       return { user_id: userId, offer_id: o.id, piste: ev.piste, prescore: ev.prescore, reasons: ev.reasons, scored_by: "mots-cles", status: "nouveau" };
     });
     if (rows.length) await db.from("offer_matches").upsert(rows, { onConflict: "user_id,offer_id", ignoreDuplicates: true });
-    if (offers.length < 500) break;
   }
 
   // 2) notation IA des meilleures offres non encore notées
