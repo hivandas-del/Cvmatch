@@ -36,24 +36,31 @@ PARTIE 2 — Adapter mon CV
 1. select a.id, a.entreprise, a.poste, a.annonce, a.cv_text, m.score as score_base, p.brief from public.cv_adaptations a left join public.offer_matches m on m.offer_id = a.offer_id and m.user_id = a.user_id and m.scored_by = 'ia' left join public.search_profiles p on p.user_id = a.user_id where a.user_id='6efedf76-4c15-4433-84c0-508161d93297' and (a.statut='en_attente' or (a.statut='en_cours' and a.updated_at < now() - interval '20 minutes')) order by a.created_at limit 3;
    Si aucune ligne : termine.
 2. select public.cvmatch_marquer(array['<id1>','<id2>']::uuid[], 'en_cours');
-3. Pour chaque demande, réécris le CV COMPLET pour l'annonce. Règles strictes :
+3. Pour chaque demande, réécris le CV pour l'annonce EN GARDANT SA FORME. Le CV de référence est UNIQUEMENT le cv_text de la demande : n'utilise rien d'autre (ni le CV du profil, ni d'anciennes versions, ni ce que tu sais d'Hivan). Règles strictes :
+   - Même forme que le cv_text : mêmes rubriques, dans le même ordre, avec les mêmes titres de rubriques (écrits comme dans le CV), mêmes expériences, projets et formations, dans le même ordre. N'ajoute aucune rubrique, ne supprime aucune rubrique, ne fusionne ni ne renomme rien. Une expérience absente du cv_text n'apparaît JAMAIS, même si tu la connais par ailleurs.
+   - Ce qui change : les mots. Titre du CV calqué sur l'intitulé du poste visé (dans la limite de ce que le parcours justifie), accroche (seulement si le CV en a une), puces réécrites (verbe d'action + résultat) avec le vocabulaire et les mots-clés de l'annonce quand c'est vrai, compétences réordonnées pour mettre en premier celles de l'annonce (mêmes groupes que le CV s'il en a). Le nombre de puces par élément reste proche de l'original.
    - N'invente RIEN : aucune expérience, mission, outil, chiffre, diplôme ou certification absent du CV. Dates, entreprises, écoles et intitulés de diplômes restent exacts.
-   - Titre du CV calqué sur l'intitulé du poste visé, dans la limite de ce que le parcours justifie.
-   - Accroche de 2-3 lignes ciblée sur l'annonce.
-   - Expériences en ordre antichronologique ; puces réécrites (verbe d'action + résultat), en reprenant le vocabulaire et les mots-clés de l'annonce quand c'est vrai ; 2 à 5 puces par poste, plus pour les postes les plus pertinents, moins pour les autres. L'expérience BTP familiale reste courte.
-   - Compétences regroupées (3-4 groupes), celles demandées par l'annonce en premier.
-   - Tient sur une page : 450-600 mots au total.
-   - Langue du CV = langue de l'annonce (français par défaut, anglais si l'annonce est en anglais).
-   - Garde les coordonnées présentes dans le CV (email, téléphone, ville, LinkedIn, site) telles quelles.
+   - Liens : garde tous les liens (GitHub, LinkedIn, portfolio, site, e-mail, projets) avec leur adresse exacte. Le bloc « [Liens du document] » en fin de cv_text n'est pas une rubrique du CV : il donne l'adresse derrière chaque libellé (ex. « GitHub : https://… »). Rattache chaque adresse à son libellé (contact ou élément concerné) et n'affiche jamais ce bloc comme une rubrique.
+   - Longueur proche du CV d'origine (une page).
+   - Langue du CV = langue de l'annonce (français par défaut, anglais si l'annonce est en anglais) ; les titres de rubriques sont alors traduits fidèlement, sans changer leur ordre.
 4. NOTE IA (une seule échelle, la même que le radar d'offres) : note de 0 à 100 l'adéquation réelle entre le CV et l'annonce selon le CV et le brief : métier visé (titres du brief), niveau (experience_max, disponibilite), stack, secteur (bonus du brief), langue (français natif, anglais B2, turc B2 ; langue locale exigée = gros frein), zone (pistes du brief ; hors zones = frein), visa. Barème : 85+ presque tout coche ; 70-84 très bon ; 50-69 partiel ; <50 hors cible.
    - score_avant = score_base s'il n'est pas null : NE LE RECALCULE PAS, recopie-le tel quel. S'il est null, note le CV de base (cv_text) avec ce barème.
    - score_apres = même barème appliqué au CV adapté. Il est ≥ score_avant (un CV mieux ciblé sur les mêmes faits ne fait pas baisser la note) et ne monte que pour ce que la réécriture rend vraiment visible (mots-clés de l'annonce présents, expériences pertinentes mises en avant) ; zone, niveau, langue ou visa ne changent pas. Honnête : en général +2 à +10 points, rien d'inventé ne compte.
-   Le résultat final a ces clés : {"nom":"","titre":"","contact":[""],"accroche":"","experiences":[{"poste":"","entreprise":"","lieu":"","dates":"","puces":[""]}],"formation":[{"diplome":"","ecole":"","dates":"","detail":""}],"competences":[{"groupe":"","items":[""]}],"langues":[""],"extras":[""],"mots_cles":["mots-clés de l'annonce repris dans le CV"],"manques":["attendus de l'annonce absents du CV, à ne pas inventer"],"changements":["3 à 5 changements principaux, une ligne chacun"],"score_avant":0,"score_apres":0}
-   extras peut être vide.
+   Le résultat final a ces clés :
+   {"nom":"","titre":"","contact":["texte simple", {"texte":"GitHub","url":"https://…"}],"accroche":"(vide si le CV n'en a pas)",
+    "sections":[ une entrée par rubrique du CV, dans l'ordre du CV :
+      {"titre":"titre exact de la rubrique","type":"experiences","elements":[{"poste":"","entreprise":"","lieu":"","dates":"","puces":[""],"liens":[{"texte":"","url":""}]}]}   (expériences, projets… ; liens facultatif)
+      {"titre":"…","type":"formation","elements":[{"diplome":"","ecole":"","dates":"","detail":""}]}
+      {"titre":"…","type":"groupes","elements":[{"groupe":"","items":[""]}]}   (compétences par groupes)
+      {"titre":"…","type":"ligne","elements":["", {"texte":"","url":""}]}   (éléments courts sur une ligne : langues, outils, centres d'intérêt…)
+      {"titre":"…","type":"liste","elements":[""]}   (liste à puces)
+      {"titre":"…","type":"texte","texte":""}   (paragraphe) ],
+    "mots_cles":["mots-clés de l'annonce repris dans le CV"],"manques":["attendus de l'annonce absents du CV, à ne pas inventer"],"changements":["3 à 5 changements principaux, une ligne chacun"],"score_avant":0,"score_apres":0}
+   Choisis pour chaque rubrique le type qui reproduit le mieux sa présentation dans le CV d'origine.
 5. Écris le résultat en 3 appels execute_sql, chacun un SELECT de fonction, JSON entre $cv$ … $cv$ (pas besoin d'échapper les apostrophes) :
    a) select public.cvmatch_cv_partie('<id>', $cv${"nom":…,"titre":…,"contact":[…],"accroche":…,"score_avant":…,"score_apres":…}$cv$::jsonb);
-   b) select public.cvmatch_cv_partie('<id>', $cv${"experiences":[…]}$cv$::jsonb);
-   c) select public.cvmatch_cv_partie('<id>', $cv${"formation":[…],"competences":[…],"langues":[…],"extras":[…],"mots_cles":[…],"manques":[…],"changements":[…]}$cv$::jsonb, true);
+   b) select public.cvmatch_cv_partie('<id>', $cv${"sections":[…toutes les rubriques…]}$cv$::jsonb);
+   c) select public.cvmatch_cv_partie('<id>', $cv${"mots_cles":[…],"manques":[…],"changements":[…]}$cv$::jsonb, true);
    Le dernier appel (true) passe la demande à « pret » et met à jour la note de l'offre dans le radar. En cas d'échec : select public.cvmatch_marquer(array['<id>']::uuid[], 'erreur', '<raison courte>');
 
 RÉSUMÉ FINAL (en français, très court) : une ligne par analyse : poste — entreprise — note ; « Profil mis à jour : <résumé> » si la partie 1 a tourné ; puis une ligne par CV adapté : poste — entreprise — note avant → après. Si rien du tout : « rien à traiter ».
