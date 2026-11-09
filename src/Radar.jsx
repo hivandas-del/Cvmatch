@@ -12,8 +12,10 @@ const TRIS = [["score", "Meilleur score"], ["recent", "Plus récentes"], ["salai
 const CONTRATS = ["CDI", "VIE", "CDD", "—"];
 const SOURCES = [["sites", "Sites carrières"], ["Business France VIE", "Business France (VIE)"], ["Adzuna", "Adzuna"], ["JSearch", "JSearch"], ["France Travail", "France Travail"],
   ["Welcome to the Jungle", "Welcome to the Jungle"], ["LinkedIn", "LinkedIn"], ["HelloWork", "HelloWork"], ["Jobijoba", "Jobijoba"]];
-const NOTES = [["ia", "Notées par l'IA"], ["pre", "En attente de note"], ["toutes", "Toutes"]];
-const FILTRES_VIDES = { seuil: 0, periode: 0, contrats: [], sources: [], pays: [], secteurs: [], note: "ia", salaire: false, remote: false };
+const NOTES = [["toutes", "Toutes"], ["ia", "Notées par l'IA"], ["pre", "En attente de note"]];
+const FILTRES_VIDES = { seuil: 0, periode: 0, contrats: [], sources: [], pays: [], secteurs: [], note: "toutes", salaire: false, remote: false };
+// Nouvelle clé : l'ancienne avait mémorisé note = "ia", qui aurait continué à cacher les offres pas encore notées.
+const CLE_FILTRES = "cvmatch.filtres.v2";
 const famille = (src = "") => (src.startsWith("Carrières") ? "sites" : src.startsWith("JSearch") ? "JSearch" : src);
 const nomPays = (() => {
   let dn = null;
@@ -23,11 +25,11 @@ const nomPays = (() => {
 const paysOf = (o) => (/^[A-Z]{2}$/.test((o.country ?? "").toUpperCase()) ? o.country.toUpperCase() : "—");
 const datePub = (r) => new Date(r.job_offers?.posted_at || r.created_at).getTime() || 0;
 const lireFiltres = () => {
-  try { return { ...FILTRES_VIDES, ...JSON.parse(localStorage.getItem("cvmatch.filtres") || "{}") }; } catch { return FILTRES_VIDES; }
+  try { return { ...FILTRES_VIDES, ...JSON.parse(localStorage.getItem(CLE_FILTRES) || "{}") }; } catch { return FILTRES_VIDES; }
 };
 const nbActifs = (f) =>
   (f.seuil ? 1 : 0) + (f.periode ? 1 : 0) + f.contrats.length + f.sources.length + f.pays.length + f.secteurs.length
-  + (f.note !== "ia" ? 1 : 0) + (f.salaire ? 1 : 0) + (f.remote ? 1 : 0);
+  + (f.note !== "toutes" ? 1 : 0) + (f.salaire ? 1 : 0) + (f.remote ? 1 : 0);
 const VUES = [["a_voir", "À regarder"], ["nouveau", "Nouvelles"], ["ajoute", "Ajoutées au suivi"], ["ignore", "Ignorées"]];
 const pisteLabel = { A: "CDI IDF", B: "International", VIE: "VIE" };
 const API_SOURCES = ["France Travail", "Adzuna", "JSearch", "Business France VIE", "Welcome to the Jungle", "LinkedIn", "HelloWork", "Jobijoba"];
@@ -151,7 +153,7 @@ function OffreCard({ r, ouvert, onToggle, onAdapter, onSuivi, onPostule, onIgnor
     <article className="carte p-5 flex flex-col gap-4 min-w-0">
       <button type="button" onClick={onToggle} aria-expanded={ouvert} className="flex gap-3.5 text-left">
         <span className="w-14 h-14 shrink-0 rounded-2xl flex flex-col items-center justify-center leading-none" style={{ background: t.bg, color: t.fg }}
-          title={r.score_cv_adapte != null ? `Note IA avec ton CV adapté (CV de base : ${pre ? "—" : r.score ?? "—"})` : s == null ? "Pas encore notée par l'IA : elle le sera au prochain passage du matin" : "Note IA de ton CV de base"}>
+          title={r.score_cv_adapte != null ? `Note IA avec ton CV adapté (CV de base : ${pre ? "—" : r.score ?? "—"})` : s == null ? "Pas encore notée par l'IA : elle en lit 60 par matin, les plus prometteuses d'abord" : "Note IA de ton CV de base"}>
           <span className="text-[22px] font-bold tabular-nums">{s ?? "—"}</span>
           {r.score_cv_adapte != null
             ? <span className="text-[9.5px] font-semibold uppercase tracking-wider mt-0.5 opacity-80">{!pre && r.score != null && r.score_cv_adapte > r.score ? `+${r.score_cv_adapte - r.score} CV` : "CV adapté"}</span>
@@ -168,7 +170,7 @@ function OffreCard({ r, ouvert, onToggle, onAdapter, onSuivi, onPostule, onIgnor
 
       <div className="flex flex-wrap items-center gap-1.5">
         {fraiche && <span className="puce bg-ink text-white font-semibold" title="Publiée il y a moins de 48 h">Tout frais · {ilYa(o.posted_at)}</span>}
-        <span className="text-[13px] font-semibold" style={{ color: t.fg }}>{s == null ? "Note IA à venir" : t.label}</span>
+        <span className="text-[13px] font-semibold" style={{ color: t.fg }}>{s == null ? "Pas encore notée" : t.label}</span>
         {r.piste && <span className="puce bg-stone-100 font-medium">{pisteLabel[r.piste]}</span>}
         {o.contract && o.contract !== r.piste && <span className="puce bg-stone-100">{o.contract}</span>}
         {sal && <span className="puce bg-stone-100">{sal}</span>}
@@ -348,7 +350,7 @@ export default function Radar({ onAdapter, onSuivi }) {
     setRows(o); setExclues(x); setJournal(j); setSites(s);
   }
   useEffect(() => { recharger().catch((e) => setMsg(e.message)).finally(() => setCharge(false)); }, []);
-  useEffect(() => { try { localStorage.setItem("cvmatch.filtres", JSON.stringify(f)); } catch { /* stockage indisponible */ } setNb(30); }, [f]);
+  useEffect(() => { try { localStorage.setItem(CLE_FILTRES, JSON.stringify(f)); } catch { /* stockage indisponible */ } setNb(30); }, [f]);
   useEffect(() => { if (!msg) return; const t = setTimeout(() => setMsg(""), 6000); return () => clearTimeout(t); }, [msg]);
 
   async function lancer(action) {
