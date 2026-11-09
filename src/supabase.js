@@ -44,12 +44,13 @@ export async function supprimerCandidature(id) {
 const CHAMPS_OFFRE = "id, source, url, title, company, location, country, contract, remote, salary_min, salary_max, salary_currency, salary_text, posted_at";
 export async function chargerOffres() {
   const out = [];
-  for (let page = 0; page < 5; page++) {
+  for (let page = 0; ; page++) {
     const { data, error } = await supabase
       .from("offer_matches")
       .select(`offer_id, piste, prescore, score, score_cv_adapte, verdict, reasons, scored_by, status, created_at, job_offers(${CHAMPS_OFFRE})`)
       .neq("status", "exclu")
       .order("created_at", { ascending: false })
+      .order("offer_id") // un lot inséré d'un coup a le même created_at : sans ça, les pages se chevauchent
       .range(page * 1000, page * 1000 + 999);
     if (error) throw error;
     out.push(...data);

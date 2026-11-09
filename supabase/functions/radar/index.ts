@@ -671,7 +671,11 @@ function minYearsRequired(desc: string): number | null {
   return ok.length ? Math.min(...ok) : null;
 }
 
+// Même seuil que le cron SQL « radar-offres-perimees » (qui écarte les offres qui vieillissent ensuite).
+const AGE_MAX_JOURS = 60;
+
 function evaluate(o: any, brief: any) {
+  if (Date.now() - new Date(o.posted_at ?? o.first_seen_at).getTime() > AGE_MAX_JOURS * 86400000) return { excluded: "Publiée il y a plus de 2 mois" };
   const title = norm(o.title);
   const text = `${title} ${norm(o.description)}`;
   const loc = norm(o.location);
