@@ -324,7 +324,7 @@ function dateFr(s: unknown): string | null {
 // « 55 000 € / an », « De 2 500 € à 3 000 € par mois » → salaire annuel [min, max]
 function salaireFr(s: string | null): [number | null, number | null] {
   if (!s || !/€|eur/i.test(s)) return [null, null];
-  const nums = [...s.matchAll(/(\d[\d\s\u202f\u00a0.]*(?:[.,]\d+)?)\s*(k)?\s*(?:€|eur)/gi)]
+  const nums = [...s.matchAll(/(\d[\d\s\u202f\u00a0.]*(?:[.,]\d+)?)\s*(k)?\s*(?:€|eur|(?=[-–]\s*\d))/gi)] // « 38 000 - 50 000 € » : le 1er nombre n'a pas de €
     .map((m) => parseFloat(m[1].replace(/[\s\u202f\u00a0.]/g, "").replace(",", ".")) * (m[2] ? 1000 : 1)).filter((n) => n > 0);
   if (!nums.length) return [null, null];
   const k = /mois|mensuel/i.test(s) ? 12 : /heure|horaire/i.test(s) ? 1607 : 1;
@@ -443,14 +443,14 @@ async function collectHelloWork(push: (o: Offer) => void, requetes: string[]) {
       const id = b.slice(0, b.indexOf('"'));
       if (!/^\d+$/.test(id) || vus.has(id)) continue;
       vus.add(id);
-      const title = contenu(b, '<p class="typo-l', "</p>") ?? "";
+      const title = contenu(b, '<span class="block typo-l', "</span>") ?? "";
       if (!isRelevantTitle(title)) continue;
       const resume = strip(entre(entre(b, 'data-cy="offerTitle"', ">") ?? "", 'aria-label="', '"') ?? "");
       const salaire = /salaire de ([^,]+)/.exec(resume)?.[1] ?? null;
       const [smin, smax] = salaireFr(salaire);
       push(webBase({
         source: "HelloWork", source_id: id, url: `https://www.hellowork.com/fr-fr/emplois/${id}.html`, title,
-        company: contenu(b, '<p class="typo-s inline"', "</p>"), location: contenu(b, 'data-cy="localisationCard"', "</div>"),
+        company: contenu(b, '<span class="inline typo-s', "</span>"), location: contenu(b, 'data-cy="localisationCard"', "</div>"),
         contract: contractFrom(contenu(b, 'data-cy="contractCard"', "</div>")) ?? "CDI",
         salary_min: smin, salary_max: smax, salary_currency: smin ? "EUR" : null, salary_text: salaire,
         description: resume.replace(/^Voir offre de /, ""), posted_at: dateFr(contenu(b, 'text-grey-500 pl-1 pt-1"', "</div>")),
